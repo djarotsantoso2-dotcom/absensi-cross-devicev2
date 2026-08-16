@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <meta name="theme-color" content="#111827">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Absensi Kamera GPS</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <style>
+    *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#f3f5f8;color:#172033}.app{max-width:760px;margin:auto;min-height:100vh;background:#f8fafc}.top{background:#111827;color:white;padding:18px;position:sticky;top:0;z-index:4;box-shadow:0 2px 12px #0002}.top h1{font-size:21px;margin:0 0 4px}.top small{opacity:.8}.tabs{display:flex;gap:7px;padding:12px;background:white;position:sticky;top:79px;z-index:3;border-bottom:1px solid #e5e7eb}.tab{flex:1;border:0;border-radius:10px;padding:11px 7px;font-weight:800;background:#eef2f7;color:#475569}.tab.on{background:#111827;color:#fff}.page{display:none;padding:14px}.page.on{display:block}.card{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:15px;margin-bottom:12px;box-shadow:0 2px 9px #0f172a0a}.card h2{font-size:16px;margin:0 0 12px}.muted{color:#64748b;font-size:13px}.clock{font-size:30px;font-weight:850}.date{color:#64748b}.grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.stat{background:#f8fafc;border-radius:12px;padding:12px}.stat b{font-size:21px;display:block}.btn{width:100%;border:0;border-radius:12px;padding:13px 12px;font-weight:850;font-size:15px;margin-top:9px}.primary{background:#111827;color:#fff}.success{background:#059669;color:#fff}.danger{background:#dc2626;color:#fff}.secondary{background:#e2e8f0;color:#1e293b}.btn:disabled{opacity:.45}.field{margin:10px 0}.field label{display:block;font-size:13px;font-weight:750;margin-bottom:6px}.field input,.field textarea{width:100%;border:1px solid #cbd5e1;border-radius:11px;padding:12px;font:inherit;background:#fff}.field textarea{min-height:90px;resize:vertical}video,canvas.preview{width:100%;border-radius:13px;background:#0f172a;aspect-ratio:4/3;object-fit:cover}.hidden{display:none!important}.pill{display:inline-block;padding:5px 9px;border-radius:999px;background:#e2e8f0;font-size:12px;font-weight:800}.ok{background:#d1fae5;color:#065f46}.bad{background:#fee2e2;color:#991b1b}.warn{background:#fef3c7;color:#92400e}.record{padding:11px 0;border-bottom:1px solid #edf2f7}.record:last-child{border:0}.record b{display:block}.row{display:flex;justify-content:space-between;gap:8px;align-items:center}.notice{font-size:12px;line-height:1.5;padding:10px;border-radius:10px;background:#eff6ff;color:#1e40af;margin-top:10px}.owner{word-break:break-all;font-weight:750}.photo-thumb{width:56px;height:56px;border-radius:10px;object-fit:cover;background:#e5e7eb}.footer{text-align:center;color:#94a3b8;font-size:11px;padding:18px}.sync-ok{color:#047857}.sync-off{color:#b45309}.sync-bad{color:#b91c1c}.statusline{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  </style>
+</head>
+<body>
+<div class="app">
+  <header class="top"><h1>Absensi Kamera + GPS</h1><small id="employeeTop">Belum memilih karyawan</small></header>
+  <nav class="tabs">
+    <button class="tab on" data-p="absen">Absensi</button>
+    <button class="tab" data-p="riwayat">Riwayat</button>
+    <button class="tab" data-p="admin">Dashboard</button>
+  </nav>
+  <main>
+    <section id="absen" class="page on">
+      <div class="card">
+        <div class="row"><div><div id="clock" class="clock">--:--:--</div><div id="date" class="date"></div></div><span id="todayStatus" class="pill">Belum absen</span></div>
+        <div class="statusline"><span id="serverBadge" class="pill warn">Server belum dikonfigurasi</span><span id="deviceBadge" class="pill">Device lokal</span></div>
+      </div>
+      <div class="card"><h2>Identitas Karyawan</h2><div class="field"><label>Nama karyawan</label><input id="employee" placeholder="Contoh: Andi Saputra" autocomplete="name"></div><button class="btn secondary" id="saveEmployee">Simpan nama & sinkronkan</button></div>
+      <div class="card"><h2>Selfie Kamera Depan</h2><p class="muted">Saat tombol ABSEN MASUK ditekan, kamera depan akan diminta dan selfie diambil otomatis. Tombol di bawah dapat dipakai untuk tes kamera.</p><video id="video" playsinline autoplay muted></video><canvas id="photo" class="preview hidden"></canvas><button class="btn primary" id="openCam">Tes Kamera Depan</button><button class="btn secondary hidden" id="takePhoto">Ambil Foto Sekarang</button><button class="btn secondary hidden" id="retryPhoto">Ulangi Foto</button><div id="cameraState" class="muted" style="margin-top:8px">Foto belum diambil.</div></div>
+      <div class="card"><h2>Lokasi GPS</h2><div id="gpsState" class="muted">Lokasi belum diambil.</div><button class="btn primary" id="getGps">Tes / Ambil Lokasi</button></div>
+      <div class="card"><h2>Detail Pekerjaan</h2><div class="field"><label>Kerjaan hari ini</label><textarea id="work" placeholder="Tuliskan pekerjaan yang dilakukan hari ini..." required></textarea></div></div>
+      <div class="card"><h2>Absensi Hari Ini</h2><button class="btn success" id="checkIn">ABSEN MASUK</button><button class="btn danger" id="checkOut">ABSEN PULANG</button><div class="notice">Pembatasan satu kali absen per hari diperiksa oleh server pusat, bukan hanya perangkat ini. Saat pulang, GPS diminta kembali dan lembur dihitung di server berdasarkan waktu server.</div></div>
+    </section>
+
+    <section id="riwayat" class="page"><div class="card"><h2>Riwayat pada Device Ini</h2><div id="history"></div><div class="notice">Data pusat tetap berada di Google Sheets. Riwayat di halaman ini adalah cache lokal untuk akses cepat; status hari ini akan disinkronkan dari server saat nama disimpan atau aplikasi dibuka.</div></div></section>
+
+    <section id="admin" class="page">
+      <div class="card"><h2>Host</h2><div id="owner" class="owner"></div><p class="muted">Backend pusat menggunakan Google Apps Script + Google Sheets/Drive.</p></div>
+      <div class="card"><h2>Rekap Minggu Ini</h2><div class="grid"><div class="stat"><span class="muted">Hari masuk</span><b id="weekDays">0</b></div><div class="stat"><span class="muted">Jam lembur</span><b id="weekOt">0</b></div><div class="stat"><span class="muted">Estimasi gaji</span><b id="weekPay">Rp0</b></div><div class="stat"><span class="muted">Sumber</span><b id="summarySource" style="font-size:14px">Lokal</b></div></div></div>
+      <div class="card"><h2>Pengaturan Gaji Tampilan</h2><div class="field"><label>Gaji per hari (Rp)</label><input id="dailyPay" inputmode="numeric" value="0"></div><div class="field"><label>Upah lembur per jam (Rp)</label><input id="otPay" inputmode="numeric" value="0"></div><button class="btn secondary" id="savePay">Simpan di device ini</button><div class="notice">Jumlah hari dan lembur dapat diambil dari server pusat. Nilai rupiah di sini hanya untuk perhitungan tampilan pada device.</div></div>
+      <div class="card"><h2>Koneksi Server</h2><div class="field"><label>Google Apps Script Web App URL</label><input id="endpoint" placeholder="https://script.google.com/macros/s/.../exec" inputmode="url"></div><button class="btn primary" id="saveEndpoint">Simpan koneksi & tes</button><div id="syncState" class="muted" style="margin-top:8px"></div><div class="notice">Untuk semua device memakai server yang sama tanpa input ulang, isi URL yang sama di file <b>web/config.js</b> sebelum deploy.</div></div>
+      <div class="card"><h2>Data Lokal</h2><button class="btn secondary" id="copyJson">Salin cache JSON</button><button class="btn danger" id="clearData">Hapus cache lokal</button></div>
+    </section>
+  </main>
+  <div class="footer">Absensi PWA <span id="version"></span></div>
+</div>
+<script src="config.js"></script>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const CFG = window.ABSENSI_CONFIG || {};
+const keyRecords = 'absensi.records.v2';
+const keyEmployee = 'absensi.employee';
+const keySettings = 'absensi.settings.v2';
+let stream = null;
+let photoData = '';
+let gps = null;
+let syncBusy = false;
+
+function records(){ try{return JSON.parse(localStorage.getItem(keyRecords)||'[]')}catch(_){return[]} }
+function saveRecords(items){ localStorage.setItem(keyRecords, JSON.stringify(items.slice(0,120))); }
+function settings(){
+  const base={dailyPay:0,otPay:0,endpoint:''};
+  try{return Object.assign(base,JSON.parse(localStorage.getItem(keySettings)||'{}'))}catch(_){return base}
+}
+function saveSettings(s){ localStorage.setItem(keySettings,JSON.stringify(s)); }
+function endpoint(){ return String((CFG.GAS_ENDPOINT||settings().endpoint||'')).trim(); }
+function employee(){ return ($('employee').value||localStorage.getItem(keyEmployee)||'').trim(); }
+function localDate(d=new Date()){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function money(n){ return 'Rp'+Math.round(Number(n)||0).toLocaleString('id-ID'); }
+function delay(ms){ return new Promise(resolve=>setTimeout(resolve,ms)); }
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function localToday(){ const n=employee(), day=localDate(); return records().find(r=>r.employee===n&&r.date===day); }
+
+function tick(){
+  const d=new Date();
+  $('clock').textContent=d.toLocaleTimeString('id-ID',{hour12:false});
+  $('date').textContent=d.toLocaleDateString('id-ID',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
+  updateToday();
+}
+
+function updateEmployee(){
+  const n=localStorage.getItem(keyEmployee)||'';
+  $('employee').value=n;
+  $('employeeTop').textContent=n||'Belum memilih karyawan';
+}
+
+function updateToday(){
+  const r=localToday(), p=$('todayStatus');
+  if(!employee()){p.textContent='Isi nama';p.className='pill';}
+  else if(r&&r.out){p.textContent='Sudah pulang';p.className='pill ok';}
+  else if(r){p.textContent='Sudah masuk';p.className='pill ok';}
+  else{p.textContent='Belum absen';p.className='pill warn';}
+}
+
+async function openCamera(){
+  if(!navigator.mediaDevices?.getUserMedia) throw new Error('Kamera browser tidak didukung.');
+  if(stream) stream.getTracks().forEach(t=>t.stop());
+  $('photo').classList.add('hidden'); $('video').classList.remove('hidden');
+  $('cameraState').textContent='Meminta izin kamera...';
+  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'user'},width:{ideal:1280},height:{ideal:960}},audio:false});
+  $('video').srcObject=stream;
+  await $('video').play().catch(()=>{});
+  await new Promise(resolve=>{
+    if($('video').readyState>=2) return resolve();
+    const done=()=>{ $('video').removeEventListener('loadeddata',done); resolve(); };
+    $('video').addEventListener('loadeddata',done,{once:true});
+    setTimeout(resolve,2500);
+  });
+  $('takePhoto').classList.remove('hidden');
+  $('retryPhoto').classList.add('hidden');
+  $('cameraState').textContent='Kamera siap.';
+}
+
+function capture(){
+  const v=$('video'), c=$('photo');
+  const w=v.videoWidth||640, h=v.videoHeight||480;
+  c.width=w; c.height=h;
+  const ctx=c.getContext('2d');
+  ctx.drawImage(v,0,0,w,h);
+  photoData=c.toDataURL('image/jpeg',0.72);
+  c.classList.remove('hidden'); v.classList.add('hidden');
+  $('takePhoto').classList.add('hidden'); $('retryPhoto').classList.remove('hidden');
+  $('cameraState').innerHTML='<span class="pill ok">Selfie siap</span>';
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+  return photoData;
+}
+
+async function autoSelfie(){
+  if(photoData) return photoData;
+  await openCamera();
+  $('cameraState').textContent='Mengambil selfie otomatis...';
+  await delay(650);
+  return capture();
+}
+
+function getGps(){
+  return new Promise((resolve,reject)=>{
+    if(!navigator.geolocation){reject(new Error('GPS tidak didukung'));return;}
+    $('gpsState').textContent='Mengambil lokasi...';
+    navigator.geolocation.getCurrentPosition(pos=>{
+      gps={lat:pos.coords.latitude,lon:pos.coords.longitude,accuracy:pos.coords.accuracy,at:new Date().toISOString()};
+      $('gpsState').innerHTML='<span class="pill ok">GPS siap</span><br>Lat '+gps.lat.toFixed(6)+' | Lon '+gps.lon.toFixed(6)+' | Akurasi '+Math.round(gps.accuracy)+' m';
+      resolve(gps);
+    },err=>{
+      $('gpsState').textContent='GPS gagal: '+err.message; reject(err);
+    },{enableHighAccuracy:true,timeout:18000,maximumAge:0});
+  });
+}
+
+function jsonp(params, timeoutMs=12000){
+  return new Promise((resolve,reject)=>{
+    const ep=endpoint();
+    if(!ep) return reject(new Error('URL server belum diisi.'));
+    const cb='__absensi_cb_'+Date.now()+'_'+Math.random().toString(36).slice(2);
+    const url=new URL(ep);
+    Object.entries(params||{}).forEach(([k,v])=>url.searchParams.set(k,String(v)));
+    url.searchParams.set('callback',cb);
+    const script=document.createElement('script');
+    const timer=setTimeout(()=>cleanup(new Error('Server timeout.')),timeoutMs);
+    function cleanup(err,data){clearTimeout(timer);delete window[cb];script.remove();err?reject(err):resolve(data);}
+    window[cb]=data=>cleanup(null,data);
+    script.onerror=()=>cleanup(new Error('Gagal membaca server.'));
+    script.src=url.toString(); document.head.appendChild(script);
+  });
+}
+
+async function serverToday(){
+  if(!endpoint()||!employee()) return null;
+  const data=await jsonp({action:'today',employee:employee(),date:localDate()});
+  if(!data?.ok) throw new Error(data?.error||'Status server gagal.');
+  return data.record||null;
+}
+
+function mergeServerToday(r){
+  if(!r) return;
+  const items=records();
+  const idx=items.findIndex(x=>String(x.id)===String(r.id)||(x.employee===r.employee&&x.date===r.date));
+  const existing=idx>=0?items[idx]:{};
+  const merged=Object.assign({},existing,{id:r.id,employee:r.employee,date:r.date,in:r.in||existing.in||'',inLocal:r.inLocal||existing.inLocal||'',out:r.out||null,outLocal:r.outLocal||null,overtime:Number(r.overtime)||0,work:r.work||existing.work||'',source:'server'});
+  if(idx>=0) items[idx]=merged; else items.unshift(merged);
+  saveRecords(items); render();
+}
+
+async function hydrateTodayFromServer(silent=true){
+  if(syncBusy||!endpoint()||!employee()) return null;
+  syncBusy=true;
+  try{
+    const r=await serverToday();
+    if(r) mergeServerToday(r);
+    $('serverBadge').textContent='Server online'; $('serverBadge').className='pill ok';
+    return r;
+  }catch(err){
+    $('serverBadge').textContent='Server tidak terbaca'; $('serverBadge').className='pill bad';
+    if(!silent) alert(err.message);
+    return null;
+  }finally{syncBusy=false;}
+}
+
+async function sendWrite(payload){
+  const ep=endpoint(); if(!ep) throw new Error('URL server belum dikonfigurasi.');
+  await fetch(ep,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(payload)});
+}
+
+async function verifyToday(attempts=5){
+  let last=null;
+  for(let i=0;i<attempts;i++){
+    await delay(i===0?700:1000);
+    try{last=await serverToday(); if(last) return last;}catch(_){ }
+  }
+  return last;
+}
+
+function resetCapture(){
+  photoData=''; gps=null;
+  $('cameraState').textContent='Foto belum diambil.'; $('gpsState').textContent='Lokasi belum diambil.';
+  $('photo').classList.add('hidden'); $('video').classList.remove('hidden'); $('retryPhoto').classList.add('hidden'); $('takePhoto').classList.add('hidden');
+}
+
+async function checkIn(){
+  const name=employee();
+  if(!name) return alert('Isi dan simpan nama karyawan terlebih dahulu.');
+  const work=$('work').value.trim();
+  if(!work) return alert('Detail pekerjaan wajib diisi.');
+  if(endpoint()){
+    const existing=await hydrateTodayFromServer(true);
+    if(existing) return alert(existing.out?'Hari ini sudah absen dan sudah pulang.':'Hari ini sudah absen masuk.');
+  }
+  try{
+    $('checkIn').disabled=true;
+    await autoSelfie();
+    if(!gps) await getGps();
+    const now=new Date();
+    const record={id:String(Date.now())+'-'+Math.random().toString(36).slice(2,8),employee:name,date:localDate(now),in:now.toISOString(),inLocal:now.toLocaleTimeString('id-ID',{hour12:false}),inGps:{...gps},inPhoto:photoData,work,out:null,outGps:null,overtime:0};
+    const items=records(); items.unshift(record); saveRecords(items); render();
+    if(endpoint()){
+      await sendWrite({type:'checkin',record});
+      const verified=await verifyToday(); if(verified) mergeServerToday(verified);
+      $('syncState').textContent=verified?'Absen masuk terverifikasi di server.':'Absen dikirim; verifikasi server belum terbaca.';
+    }else{
+      $('syncState').textContent='Tersimpan lokal. Isi URL server agar sinkron lintas device.';
+    }
+    $('work').value=''; resetCapture(); render();
+    alert('Absen masuk berhasil disimpan'+(endpoint()?' dan dikirim ke server.':'.'));
+  }catch(err){ alert('Absen masuk gagal: '+err.message); }
+  finally{$('checkIn').disabled=false;}
+}
+
+async function checkOut(){
+  const name=employee(); if(!name) return alert('Isi nama karyawan terlebih dahulu.');
+  let r=localToday();
+  if(endpoint()){
+    const sr=await hydrateTodayFromServer(true);
+    if(sr){mergeServerToday(sr);r=localToday();}
+  }
+  if(!r) return alert('Belum ada absen masuk hari ini.');
+  if(r.out) return alert('Absen pulang sudah tersimpan.');
+  try{
+    $('checkOut').disabled=true;
+    gps=null; await getGps();
+    const now=new Date();
+    r.out=now.toISOString(); r.outLocal=now.toLocaleTimeString('id-ID',{hour12:false}); r.outGps={...gps};
+    const items=records(); const i=items.findIndex(x=>String(x.id)===String(r.id)); if(i>=0)items[i]=r; saveRecords(items); render();
+    if(endpoint()){
+      await sendWrite({type:'checkout',record:r});
+      const verified=await verifyToday(); if(verified) mergeServerToday(verified);
+      alert('Absen pulang dikirim. Lembur dihitung oleh server'+(verified?' = '+Number(verified.overtime||0).toFixed(2)+' jam.':'.'));
+    }else{
+      alert('Absen pulang tersimpan lokal. Untuk lembur server dan cross-device, konfigurasi URL backend.');
+    }
+    gps=null; render();
+  }catch(err){alert('Absen pulang gagal: '+err.message);}
+  finally{$('checkOut').disabled=false;}
+}
+
+function renderHistory(){
+  const items=records(), box=$('history');
+  if(!items.length){box.innerHTML='<p class="muted">Belum ada data pada device ini.</p>';return;}
+  box.innerHTML=items.map(r=>'<div class="record"><div class="row"><div><b>'+escapeHtml(r.employee)+'</b><span class="muted">'+escapeHtml(r.date)+'</span></div>'+(r.inPhoto?'<img class="photo-thumb" src="'+r.inPhoto+'">':'')+'</div><div class="muted" style="margin-top:7px">Masuk: '+escapeHtml(r.inLocal||'-')+' | Pulang: '+escapeHtml(r.outLocal||'-')+' | Lembur: '+Number(r.overtime||0).toFixed(2)+' jam</div><div style="margin-top:5px">'+escapeHtml(r.work||'Tidak ada detail pekerjaan')+'</div></div>').join('');
+}
+
+function startOfWeek(){const d=new Date(),day=(d.getDay()+6)%7;d.setHours(0,0,0,0);d.setDate(d.getDate()-day);return d;}
+async function refreshSummary(){
+  const st=settings(); let days=0,ot=0,source='Lokal';
+  if(endpoint()&&employee()){
+    try{
+      const data=await jsonp({action:'weekSummary',employee:employee()});
+      if(data?.ok){days=Number(data.days)||0;ot=Number(data.overtime)||0;source='Server';}
+    }catch(_){ }
+  }
+  if(source==='Lokal'){
+    const start=startOfWeek(),w=records().filter(r=>r.employee===employee()&&r.in&&new Date(r.in)>=start);
+    days=new Set(w.map(r=>r.date)).size; ot=w.reduce((x,r)=>x+(Number(r.overtime)||0),0);
+  }
+  $('weekDays').textContent=days; $('weekOt').textContent=(Math.round(ot*100)/100).toFixed(2); $('weekPay').textContent=money(days*(Number(st.dailyPay)||0)+ot*(Number(st.otPay)||0)); $('summarySource').textContent=source;
+}
+
+function renderAdmin(){
+  const st=settings(); $('dailyPay').value=st.dailyPay; $('otPay').value=st.otPay; $('endpoint').value=st.endpoint||CFG.GAS_ENDPOINT||'';
+  $('syncState').textContent=endpoint()?'Server pusat dikonfigurasi.':'Mode lokal - URL server belum diisi.';
+  $('syncState').className='muted '+(endpoint()?'sync-ok':'sync-off');
+  $('owner').textContent=CFG.HOST_LABEL||'Host backend'; $('version').textContent=CFG.APP_VERSION||'1.5.0';
+  $('serverBadge').textContent=endpoint()?'Server dikonfigurasi':'Server belum dikonfigurasi'; $('serverBadge').className='pill '+(endpoint()?'ok':'warn');
+}
+
+function render(){renderHistory();renderAdmin();updateToday();refreshSummary();}
+
+async function testServer(){
+  if(!endpoint()) return false;
+  try{const data=await jsonp({action:'health'});if(!data?.ok)throw new Error(data?.error||'Backend tidak sehat.');$('serverBadge').textContent='Server online';$('serverBadge').className='pill ok';$('syncState').textContent='Koneksi server berhasil. Versi backend: '+(data.version||'-');$('syncState').className='muted sync-ok';return true;}catch(err){$('serverBadge').textContent='Server gagal';$('serverBadge').className='pill bad';$('syncState').textContent='Koneksi gagal: '+err.message;$('syncState').className='muted sync-bad';return false;}
+}
+
+document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab,.page').forEach(x=>x.classList.remove('on'));b.classList.add('on');$(b.dataset.p).classList.add('on');render();});
+$('saveEmployee').onclick=async()=>{const n=$('employee').value.trim();if(!n)return alert('Nama tidak boleh kosong.');localStorage.setItem(keyEmployee,n);updateEmployee();await hydrateTodayFromServer(false);render();alert('Nama disimpan dan status hari ini disinkronkan.');};
+$('openCam').onclick=()=>openCamera().catch(e=>alert('Kamera gagal: '+e.message));
+$('takePhoto').onclick=capture; $('retryPhoto').onclick=()=>openCamera().catch(e=>alert('Kamera gagal: '+e.message));
+$('getGps').onclick=()=>getGps().catch(()=>{}); $('checkIn').onclick=checkIn; $('checkOut').onclick=checkOut;
+$('savePay').onclick=()=>{const s=settings();s.dailyPay=Number($('dailyPay').value)||0;s.otPay=Number($('otPay').value)||0;saveSettings(s);render();alert('Pengaturan tampilan gaji disimpan.');};
+$('saveEndpoint').onclick=async()=>{const s=settings();s.endpoint=$('endpoint').value.trim();saveSettings(s);render();const ok=await testServer();if(ok){await hydrateTodayFromServer(true);render();}};
+$('copyJson').onclick=async()=>{const data=JSON.stringify({owner:CFG.HOST_LABEL||'',records:records(),settings:settings()},null,2);try{await navigator.clipboard.writeText(data);alert('Cache JSON disalin.');}catch(_){prompt('Salin data berikut:',data);}};
+$('clearData').onclick=()=>{if(confirm('Hapus seluruh cache lokal? Data di server tidak ikut terhapus.')){localStorage.removeItem(keyRecords);render();}};
+
+updateEmployee();tick();setInterval(tick,1000);render();
+if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));}
+window.addEventListener('load',async()=>{await testServer();await hydrateTodayFromServer(true);render();});
+setInterval(()=>hydrateTodayFromServer(true),30000);
+</script>
+</body>
+</html>
