@@ -1,19 +1,48 @@
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.7.0';
 const SHEET_NAME = 'Absensi';
-const DEFAULT_NORMAL_OUT = '19:00';
+const DEFAULT_NORMAL_OUT = '17:30';
+
+const DIVISION_STARTS = Object.freeze({
+  ADMIN: '08:00',
+  PACKING: '09:00',
+  GUDANG: '09:00'
+});
+
+const HEADERS = [
+  'ID','Karyawan','Divisi','Tanggal','Jam Masuk','Jadwal Masuk','Telat Menit',
+  'Lat Masuk','Lon Masuk','Akurasi Masuk','Foto','Pekerjaan',
+  'Jam Pulang','Lat Pulang','Lon Pulang','Akurasi Pulang','Lembur Jam',
+  'Host','Status','Dibuat','Diubah'
+];
 
 function doGet(e) {
   try {
     const p = (e && e.parameter) || {};
     const action = String(p.action || 'health');
     let result;
-    if (action === 'health') result = {ok:true, service:'Absensi Kamera GPS', version:APP_VERSION, host:getProp_('HOST_EMAIL',''), serverTime:new Date().toISOString()};
-    else if (action === 'today') result = getToday_(p.employee, p.date);
-    else if (action === 'weekSummary') result = weekSummary_(p.employee);
-    else throw new Error('Action tidak dikenal');
+    if (action === 'health') {
+      result = {
+        ok: true,
+        service: 'Absensi Kamera GPS',
+        version: APP_VERSION,
+        host: getProp_('HOST_EMAIL',''),
+        normalOut: getProp_('NORMAL_OUT', DEFAULT_NORMAL_OUT),
+        schedules: DIVISION_STARTS,
+        serverTime: new Date().toISOString()
+      };
+    } else if (action === 'today') {
+      result = getToday_(p.employee, p.date);
+    } else if (action === 'weekSummary') {
+      result = weekSummary_(p.employee);
+    } else {
+      throw new Error('Action tidak dikenal');
+    }
     return output_(result, p.callback || p.prefix || '');
   } catch (err) {
-    return output_({ok:false,error:String(err && err.message || err)}, (e && e.parameter && (e.parameter.callback || e.parameter.prefix)) || '');
+    return output_(
+      {ok:false,error:String(err && err.message || err)},
+      (e && e.parameter && (e.parameter.callback || e.parameter.prefix)) || ''
+    );
   }
 }
 
@@ -36,7 +65,10 @@ function doPost(e) {
 
 function saveCheckin_(sh, r) {
   const employee = cleanName_(r.employee);
+  const division = normalizeDivision_(r.division);
   if (!employee) throw new Error('Nama karyawan wajib diisi');
+  if (!division) throw new Error('Divisi wajib dipilih: Admin, Packing, atau Gudang');
+
   const serverNow = new Date();
   const date = format_(serverNow, 'yyyy-MM-dd');
   const inLocal = format_(serverNow, 'HH:mm:ss');
@@ -44,13 +76,17 @@ function saveCheckin_(sh, r) {
   if (existing) return {ok:false,duplicate:true,error:'Karyawan sudah absen hari ini',record:publicRecord_(sh, existing)};
 
   const id = String(r.id || Utilities.getUuid());
+  const scheduledStart = DIVISION_STARTS[division];
+  const lateMinutes = lateMinutes_(inLocal, scheduledStart);
   const photoUrl = r.inPhoto ? savePhoto_(r.inPhoto, `${safe_(employee)}_${date}_${safe_(id)}.jpg`) : '';
+
   sh.appendRow([
-    id, employee, date, inLocal,
+    id, employee, division, date, inLocal, scheduledStart, lateMinutes,
     val_(r.inGps,'lat'), val_(r.inGps,'lon'), val_(r.inGps,'accuracy'), photoUrl,
     String(r.work || '').trim(), '', '', '', '', 0,
     getProp_('HOST_EMAIL',''), 'MASUK', serverNow, serverNow
   ]);
+
   return {ok:true,row:sh.getLastRow(),record:publicRecord_(sh, sh.getLastRow())};
 }
 
@@ -58,6 +94,7 @@ function saveCheckout_(sh, r) {
   const employee = cleanName_(r.employee);
   const serverNow = new Date();
   const date = format_(serverNow, 'yyyy-MM-dd');
+
   let row = findRowById_(sh, String(r.id || ''));
   if (!row && employee) row = findRowByEmployeeDate_(sh, employee, date);
   if (!row) throw new Error('Data absen masuk hari ini tidak ditemukan');
@@ -66,18 +103,24 @@ function saveCheckout_(sh, r) {
   if (existing.outLocal) return {ok:true,duplicate:true,record:existing};
 
   const outLocal = format_(serverNow, 'HH:mm:ss');
-  const overtime = overtimeHours_(serverNow, getProp_('NORMAL_OUT', DEFAULT_NORMAL_OUT));
-  sh.getRange(row,10,1,9).setValues([[
-    outLocal, val_(r.outGps,'lat'), val_(r.outGps,'lon'), val_(r.outGps,'accuracy'),
-    overtime, getProp_('HOST_EMAIL',''), 'PULANG', sh.getRange(row,17).getValue() || serverNow, serverNow
+  const normalOut = getProp_('NORMAL_OUT', DEFAULT_NORMAL_OUT);
+  const overtime = overtimeHours_(existing.inLocal, outLocal, normalOut);
+
+  sh.getRange(row,13,1,9).setValues([[
+    outLocal,
+    val_(r.outGps,'lat'), val_(r.outGps,'lon'), val_(r.outGps,'accuracy'),
+    overtime,
+    getProp_('HOST_EMAIL',''), 'PULANG',
+    sh.getRange(row,20).getValue() || serverNow,
+    serverNow
   ]]);
+
   return {ok:true,row:row,record:publicRecord_(sh,row)};
 }
 
 function getToday_(employee, requestedDate) {
   const name = cleanName_(employee);
   if (!name) throw new Error('Nama karyawan kosong');
-  // Status hari ini selalu memakai tanggal server untuk mencegah manipulasi tanggal device.
   const date = format_(new Date(),'yyyy-MM-dd');
   const sh = getSheet_();
   const row = findRowByEmployeeDate_(sh, name, date);
@@ -87,84 +130,208 @@ function getToday_(employee, requestedDate) {
 function weekSummary_(employee) {
   const name = cleanName_(employee);
   if (!name) throw new Error('Nama karyawan kosong');
+
   const sh = getSheet_();
   const last = sh.getLastRow();
-  if (last < 2) return {ok:true,days:0,overtime:0};
-  const values = sh.getRange(2,1,last-1,18).getValues();
+  if (last < 2) return {ok:true,days:0,overtime:0,lateMinutes:0};
+
+  const values = sh.getRange(2,1,last-1,HEADERS.length).getValues();
   const now = new Date();
-  const monday = new Date(now); monday.setHours(0,0,0,0); monday.setDate(monday.getDate() - ((monday.getDay()+6)%7));
+  const monday = new Date(now);
+  monday.setHours(0,0,0,0);
+  monday.setDate(monday.getDate() - ((monday.getDay()+6)%7));
   const start = format_(monday,'yyyy-MM-dd');
+
   const dates = {};
   let ot = 0;
-  values.forEach(row=>{
+  let late = 0;
+
+  values.forEach(row => {
     if (String(row[1]).trim().toLowerCase() !== name.toLowerCase()) return;
-    const d = String(row[2]); if (d < start) return;
-    dates[d] = true; ot += Number(row[13]) || 0;
+    const d = String(row[3]);
+    if (d < start) return;
+    dates[d] = true;
+    late += Number(row[6]) || 0;
+    ot += Number(row[16]) || 0;
   });
-  return {ok:true,days:Object.keys(dates).length,overtime:Math.round(ot*100)/100,weekStart:start};
+
+  return {
+    ok:true,
+    days:Object.keys(dates).length,
+    overtime:Math.round(ot*100)/100,
+    lateMinutes:Math.round(late),
+    weekStart:start
+  };
 }
 
 function getSheet_() {
   const spreadsheetId = getProp_('SPREADSHEET_ID','');
   if (!spreadsheetId) throw new Error('Script Property SPREADSHEET_ID belum diisi');
+
   const ss = SpreadsheetApp.openById(spreadsheetId);
   let sh = ss.getSheetByName(SHEET_NAME);
   if (!sh) sh = ss.insertSheet(SHEET_NAME);
+
   ensureHeader_(sh);
   return sh;
 }
 
 function ensureHeader_(sh) {
-  const headers = ['ID','Karyawan','Tanggal','Jam Masuk','Lat Masuk','Lon Masuk','Akurasi Masuk','Foto','Pekerjaan','Jam Pulang','Lat Pulang','Lon Pulang','Akurasi Pulang','Lembur Jam','Host','Status','Dibuat','Diubah'];
-  if (sh.getLastRow() === 0) sh.appendRow(headers);
-  else if (!String(sh.getRange(1,1).getValue()).trim()) sh.getRange(1,1,1,headers.length).setValues([headers]);
+  const last = sh.getLastRow();
+
+  if (last === 0) {
+    sh.getRange(1,1,1,HEADERS.length).setValues([HEADERS]);
+    return;
+  }
+
+  const current = sh.getRange(1,1,1,HEADERS.length).getDisplayValues()[0];
+  const same = HEADERS.every((h,i) => String(current[i] || '') === h);
+  if (same) return;
+
+  if (last <= 1) {
+    sh.getRange(1,1,1,Math.max(sh.getLastColumn(),HEADERS.length)).clearContent();
+    sh.getRange(1,1,1,HEADERS.length).setValues([HEADERS]);
+    return;
+  }
+
+  throw new Error('Struktur sheet masih versi lama. Kosongkan data Absensi terlebih dahulu lalu jalankan lagi.');
 }
 
 function findRowById_(sh,id) {
   if (!id) return 0;
-  const last=sh.getLastRow(); if(last<2) return 0;
-  const ids=sh.getRange(2,1,last-1,1).getDisplayValues();
-  for(let i=0;i<ids.length;i++) if(String(ids[i][0])===id) return i+2;
+  const last = sh.getLastRow();
+  if (last < 2) return 0;
+
+  const ids = sh.getRange(2,1,last-1,1).getDisplayValues();
+  for (let i=0;i<ids.length;i++) {
+    if (String(ids[i][0]) === id) return i+2;
+  }
   return 0;
 }
 
 function findRowByEmployeeDate_(sh,employee,date) {
-  const last=sh.getLastRow(); if(last<2) return 0;
-  const rows=sh.getRange(2,2,last-1,2).getDisplayValues();
-  const n=String(employee).trim().toLowerCase();
-  for(let i=0;i<rows.length;i++) if(String(rows[i][0]).trim().toLowerCase()===n && String(rows[i][1])===String(date)) return i+2;
+  const last = sh.getLastRow();
+  if (last < 2) return 0;
+
+  const rows = sh.getRange(2,2,last-1,3).getDisplayValues();
+  const n = String(employee).trim().toLowerCase();
+
+  for (let i=0;i<rows.length;i++) {
+    if (
+      String(rows[i][0]).trim().toLowerCase() === n &&
+      String(rows[i][2]) === String(date)
+    ) return i+2;
+  }
   return 0;
 }
 
 function publicRecord_(sh,row) {
-  const v=sh.getRange(row,1,1,18).getValues()[0];
-  return {id:String(v[0]||''),employee:String(v[1]||''),date:String(v[2]||''),inLocal:String(v[3]||''),work:String(v[8]||''),outLocal:String(v[9]||''),overtime:Number(v[13])||0,status:String(v[15]||'')};
+  const v = sh.getRange(row,1,1,HEADERS.length).getValues()[0];
+  return {
+    id:String(v[0]||''),
+    employee:String(v[1]||''),
+    division:String(v[2]||''),
+    date:String(v[3]||''),
+    inLocal:String(v[4]||''),
+    scheduledStart:String(v[5]||''),
+    lateMinutes:Number(v[6])||0,
+    work:String(v[11]||''),
+    outLocal:String(v[12]||''),
+    overtime:Number(v[16])||0,
+    status:String(v[18]||'')
+  };
 }
 
-function overtimeHours_(now, normalOut) {
-  const parts=String(normalOut||DEFAULT_NORMAL_OUT).split(':').map(Number);
-  const normal=new Date(now); normal.setHours(parts[0]||0, parts[1]||0, 0, 0);
-  return Math.round(Math.max(0,(now-normal)/3600000)*100)/100;
+function normalizeDivision_(s) {
+  const v = String(s || '').trim().toUpperCase();
+  if (v === 'ADMIN') return 'ADMIN';
+  if (v === 'PACKING') return 'PACKING';
+  if (v === 'GUDANG') return 'GUDANG';
+  return '';
+}
+
+function lateMinutes_(actual, scheduled) {
+  const a = minutesFromClock_(actual);
+  const s = minutesFromClock_(scheduled);
+  if (a == null || s == null) return 0;
+  return Math.max(0, a - s);
+}
+
+function overtimeHours_(inLocal, outLocal, normalOut) {
+  const inMin = minutesFromClock_(inLocal);
+  const outMin = minutesFromClock_(outLocal);
+  const normalMin = minutesFromClock_(normalOut);
+
+  if (inMin == null || outMin == null || normalMin == null) return 0;
+  if (inMin >= normalMin) return 0;
+  if (outMin <= normalMin) return 0;
+
+  return Math.round(((outMin - normalMin) / 60) * 100) / 100;
+}
+
+function minutesFromClock_(value) {
+  const parts = String(value || '').trim().split(':').map(Number);
+  if (parts.length < 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) return null;
+
+  const h = parts[0];
+  const m = parts[1];
+
+  if (h < 0 || h > 23 || m < 0 || m > 59) return null;
+  return h * 60 + m;
 }
 
 function savePhoto_(dataUrl,name) {
-  const folderId=getProp_('PHOTO_FOLDER_ID','');
+  const folderId = getProp_('PHOTO_FOLDER_ID','');
   if (!folderId) throw new Error('Script Property PHOTO_FOLDER_ID belum diisi');
-  const m=String(dataUrl).match(/^data:(image\/[^;]+);base64,(.+)$/);
-  if(!m) throw new Error('Format foto tidak valid');
-  const blob=Utilities.newBlob(Utilities.base64Decode(m[2]),m[1],name);
+
+  const m = String(dataUrl).match(/^data:(image\/[^;]+);base64,(.+)$/);
+  if (!m) throw new Error('Format foto tidak valid');
+
+  const blob = Utilities.newBlob(
+    Utilities.base64Decode(m[2]),
+    m[1],
+    name
+  );
+
   return DriveApp.getFolderById(folderId).createFile(blob).getUrl();
 }
 
-function getProp_(key, fallback) { const value=PropertiesService.getScriptProperties().getProperty(key); return value == null || value === '' ? fallback : value; }
-function cleanName_(s){return String(s||'').replace(/\s+/g,' ').trim().slice(0,80);}
-function safe_(s){return String(s||'x').replace(/[^a-z0-9_-]+/gi,'_').slice(0,80);}
-function val_(o,k){return o && o[k]!=null ? o[k] : '';}
-function format_(d,pattern){return Utilities.formatDate(d, Session.getScriptTimeZone() || 'Asia/Jakarta', pattern);}
+function getProp_(key, fallback) {
+  const value = PropertiesService.getScriptProperties().getProperty(key);
+  return value == null || value === '' ? fallback : value;
+}
+
+function cleanName_(s) {
+  return String(s||'').replace(/\s+/g,' ').trim().slice(0,80);
+}
+
+function safe_(s) {
+  return String(s||'x').replace(/[^a-z0-9_-]+/gi,'_').slice(0,80);
+}
+
+function val_(o,k) {
+  return o && o[k] != null ? o[k] : '';
+}
+
+function format_(d,pattern) {
+  return Utilities.formatDate(
+    d,
+    Session.getScriptTimeZone() || 'Asia/Jakarta',
+    pattern
+  );
+}
 
 function output_(obj, callback) {
-  const json=JSON.stringify(obj);
-  const cb=String(callback||'');
-  if (cb && /^[A-Za-z_$][0-9A-Za-z_$]*$/.test(cb)) return ContentService.createTextOutput(cb+'('+json+')').setMimeType(ContentService.MimeType.JAVASCRIPT);
-  return ContentService.createTextOutput(json).setMimeType(ContentService.MimeType.JSON);
+  const json = JSON.stringify(obj);
+  const cb = String(callback||'');
+
+  if (cb && /^[A-Za-z_$][0-9A-Za-z_$]*$/.test(cb)) {
+    return ContentService
+      .createTextOutput(cb+'('+json+')')
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+
+  return ContentService
+    .createTextOutput(json)
+    .setMimeType(ContentService.MimeType.JSON);
 }

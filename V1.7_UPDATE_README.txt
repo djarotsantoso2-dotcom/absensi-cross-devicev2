@@ -1,0 +1,23 @@
+ABSENSI v1.7 UPDATE
+===================
+
+Perubahan:
+- Jadwal masuk Admin = 08:00
+- Jadwal masuk Packing = 09:00
+- Jadwal masuk Gudang = 09:00
+- Jam masuk aktual tetap menggunakan waktu server (tidak dimanipulasi)
+- Backend menghitung keterlambatan dalam menit
+- Lembur tidak dihitung jika karyawan baru masuk setelah jam pulang normal
+- UI tema Jepang/anime pastel dengan aksen sakura, tetap minimal
+- Cache riwayat lokal v1.6 direset otomatis
+- Versi frontend/backend menjadi 1.7.0
+
+SETELAH ZIP DIUPLOAD KE ROOT REPO:
+1. unzip -o Absensi_v1.7_Japanese_UI_Update.zip
+2. git add .
+3. git commit -m "Add division schedules and Japanese UI v1.7"
+4. git push origin main
+
+PENTING:
+File backend/Code.gs juga harus disalin ke Google Apps Script dan deployment Web App
+harus di-update ke versi baru agar aturan jadwal dan lembur v1.7 aktif di server.
