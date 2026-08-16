@@ -1,0 +1,53 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "android/**"
+      - "web/**"
+      - ".github/workflows/android-apk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install Android platform
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - name: Build debug APK
+        run: gradle -p android :app:assembleDebug --stacktrace
+      - name: Prepare APK
+        run: |
+          mkdir -p apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk apk/Absensi_Elegant_v1.6.apk
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Absensi-Elegant-v1.6
+          path: apk/Absensi_Elegant_v1.6.apk
+      - name: Commit APK to repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apk/Absensi_Elegant_v1.6.apk
+          if ! git diff --cached --quiet; then
+            git commit -m "Build Absensi Elegant v1.6 APK"
+            git push
+          fi

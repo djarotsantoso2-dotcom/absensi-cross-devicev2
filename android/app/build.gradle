@@ -1,0 +1,14 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.teymor.absensi'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.teymor.absensi'
+        minSdk 24
+        targetSdk 35
+        versionCode 16
+        versionName '1.6.0'
+    }
+}
