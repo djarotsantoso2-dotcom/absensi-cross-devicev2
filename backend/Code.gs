@@ -1,4 +1,4 @@
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.9.0';
 const SHEET_NAME = 'Absensi';
 const DEFAULT_NORMAL_OUT = '17:30';
 
@@ -8,11 +8,18 @@ const DIVISION_STARTS = Object.freeze({
   GUDANG: '09:00'
 });
 
+const WAREHOUSES = Object.freeze({
+  KEBANDUNGAN: Object.freeze({name:'Kebandungan', lat:-6.6335959, lon:106.7761478, radiusM:10}),
+  PARAKAN: Object.freeze({name:'Parakan', lat:null, lon:null, radiusM:10}),
+  CM: Object.freeze({name:'CM', lat:-6.6264890, lon:106.7792440, radiusM:10}),
+  NANAS: Object.freeze({name:'Nanas', lat:null, lon:null, radiusM:10})
+});
+
 const HEADERS = [
   'ID','Karyawan','Divisi','Tanggal','Jam Masuk','Jadwal Masuk','Telat Menit',
   'Lat Masuk','Lon Masuk','Akurasi Masuk','Foto','Pekerjaan',
   'Jam Pulang','Lat Pulang','Lon Pulang','Akurasi Pulang','Lembur Jam',
-  'Host','Status','Dibuat','Diubah'
+  'Host','Status','Dibuat','Diubah','Gudang'
 ];
 
 function doGet(e) {
@@ -28,12 +35,13 @@ function doGet(e) {
         host: getProp_('HOST_EMAIL',''),
         normalOut: getProp_('NORMAL_OUT', DEFAULT_NORMAL_OUT),
         schedules: DIVISION_STARTS,
+        warehouses: WAREHOUSES,
         serverTime: new Date().toISOString()
       };
     } else if (action === 'today') {
-      result = getToday_(p.employee, p.date);
+      result = getToday_(p.employee, p.warehouse, p.date);
     } else if (action === 'weekSummary') {
-      result = weekSummary_(p.employee);
+      result = weekSummary_(p.employee, p.warehouse);
     } else {
       throw new Error('Action tidak dikenal');
     }
@@ -66,8 +74,12 @@ function doPost(e) {
 function saveCheckin_(sh, r) {
   const employee = cleanName_(r.employee);
   const division = normalizeDivision_(r.division);
+  const warehouse = normalizeWarehouse_(r.warehouse);
   if (!employee) throw new Error('Nama karyawan wajib diisi');
   if (!division) throw new Error('Divisi wajib dipilih: Admin, Packing, atau Gudang');
+  if (!warehouse) throw new Error('Gudang wajib dipilih: Kebandungan, Parakan, CM, atau Nanas');
+
+  validateCheckinGeofence_(warehouse, r.inGps);
 
   const serverNow = new Date();
   const date = format_(serverNow, 'yyyy-MM-dd');
@@ -78,13 +90,13 @@ function saveCheckin_(sh, r) {
   const id = String(r.id || Utilities.getUuid());
   const scheduledStart = DIVISION_STARTS[division];
   const lateMinutes = lateMinutes_(inLocal, scheduledStart);
-  const photoUrl = r.inPhoto ? savePhoto_(r.inPhoto, `${safe_(employee)}_${date}_${safe_(id)}.jpg`) : '';
+  const photoUrl = r.inPhoto ? savePhoto_(r.inPhoto, `${safe_(warehouse)}_${safe_(employee)}_${date}_${safe_(id)}.jpg`) : '';
 
   sh.appendRow([
     id, employee, division, date, inLocal, scheduledStart, lateMinutes,
     val_(r.inGps,'lat'), val_(r.inGps,'lon'), val_(r.inGps,'accuracy'), photoUrl,
     String(r.work || '').trim(), '', '', '', '', 0,
-    getProp_('HOST_EMAIL',''), 'MASUK', serverNow, serverNow
+    getProp_('HOST_EMAIL',''), 'MASUK', serverNow, serverNow, warehouse
   ]);
 
   return {ok:true,row:sh.getLastRow(),record:publicRecord_(sh, sh.getLastRow())};
@@ -118,18 +130,22 @@ function saveCheckout_(sh, r) {
   return {ok:true,row:row,record:publicRecord_(sh,row)};
 }
 
-function getToday_(employee, requestedDate) {
+function getToday_(employee, warehouse, requestedDate) {
   const name = cleanName_(employee);
+  const wh = normalizeWarehouse_(warehouse);
   if (!name) throw new Error('Nama karyawan kosong');
+  if (!wh) throw new Error('Gudang belum dipilih');
   const date = format_(new Date(),'yyyy-MM-dd');
   const sh = getSheet_();
-  const row = findRowByEmployeeDate_(sh, name, date);
+  const row = findRowByEmployeeDateWarehouse_(sh, name, date, wh);
   return {ok:true,record:row ? publicRecord_(sh,row) : null};
 }
 
-function weekSummary_(employee) {
+function weekSummary_(employee, warehouse) {
   const name = cleanName_(employee);
+  const wh = normalizeWarehouse_(warehouse);
   if (!name) throw new Error('Nama karyawan kosong');
+  if (!wh) throw new Error('Gudang belum dipilih');
 
   const sh = getSheet_();
   const last = sh.getLastRow();
@@ -148,6 +164,7 @@ function weekSummary_(employee) {
 
   values.forEach(row => {
     if (String(row[1]).trim().toLowerCase() !== name.toLowerCase()) return;
+    if (String(row[21] || '').trim().toUpperCase() !== wh) return;
     const d = String(row[3]);
     if (d < start) return;
     dates[d] = true;
@@ -178,15 +195,23 @@ function getSheet_() {
 
 function ensureHeader_(sh) {
   const last = sh.getLastRow();
+  const legacyHeaders = HEADERS.slice(0,21);
 
   if (last === 0) {
     sh.getRange(1,1,1,HEADERS.length).setValues([HEADERS]);
     return;
   }
 
-  const current = sh.getRange(1,1,1,HEADERS.length).getDisplayValues()[0];
-  const same = HEADERS.every((h,i) => String(current[i] || '') === h);
-  if (same) return;
+  const legacyCurrent = sh.getRange(1,1,1,legacyHeaders.length).getDisplayValues()[0];
+  const legacySame = legacyHeaders.every((h,i) => String(legacyCurrent[i] || '') === h);
+  const currentWarehouseHeader = String(sh.getRange(1,22).getDisplayValue() || '');
+
+  if (legacySame && currentWarehouseHeader === 'Gudang') return;
+
+  if (legacySame && !currentWarehouseHeader) {
+    sh.getRange(1,22).setValue('Gudang');
+    return;
+  }
 
   if (last <= 1) {
     sh.getRange(1,1,1,Math.max(sh.getLastColumn(),HEADERS.length)).clearContent();
@@ -194,7 +219,7 @@ function ensureHeader_(sh) {
     return;
   }
 
-  throw new Error('Struktur sheet masih versi lama. Kosongkan data Absensi terlebih dahulu lalu jalankan lagi.');
+  throw new Error('Struktur sheet tidak dikenali. Backup data lalu periksa header sheet Absensi.');
 }
 
 function findRowById_(sh,id) {
@@ -225,11 +250,28 @@ function findRowByEmployeeDate_(sh,employee,date) {
   return 0;
 }
 
+function findRowByEmployeeDateWarehouse_(sh,employee,date,warehouse) {
+  const last = sh.getLastRow();
+  if (last < 2) return 0;
+  const rows = sh.getRange(2,2,last-1,21).getDisplayValues();
+  const n = String(employee).trim().toLowerCase();
+  const w = String(warehouse).trim().toUpperCase();
+  for (let i=0;i<rows.length;i++) {
+    if (
+      String(rows[i][0]).trim().toLowerCase() === n &&
+      String(rows[i][2]) === String(date) &&
+      String(rows[i][20] || '').trim().toUpperCase() === w
+    ) return i+2;
+  }
+  return 0;
+}
+
 function publicRecord_(sh,row) {
   const v = sh.getRange(row,1,1,HEADERS.length).getValues()[0];
   return {
     id:String(v[0]||''),
     employee:String(v[1]||''),
+    warehouse:String(v[21]||''),
     division:String(v[2]||''),
     date:String(v[3]||''),
     inLocal:String(v[4]||''),
@@ -248,6 +290,45 @@ function normalizeDivision_(s) {
   if (v === 'PACKING') return 'PACKING';
   if (v === 'GUDANG') return 'GUDANG';
   return '';
+}
+
+function validateCheckinGeofence_(warehouse, gps) {
+  const cfg = WAREHOUSES[warehouse];
+  if (!cfg) throw new Error('Gudang tidak valid');
+  if (!Number.isFinite(Number(cfg.lat)) || !Number.isFinite(Number(cfg.lon))) {
+    throw new Error('Koordinat Gudang ' + cfg.name + ' belum dikonfigurasi. Absen masuk dikunci.');
+  }
+
+  const lat = Number(gps && gps.lat);
+  const lon = Number(gps && gps.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    throw new Error('GPS wajib aktif untuk absen masuk');
+  }
+
+  const distance = distanceMeters_(lat, lon, Number(cfg.lat), Number(cfg.lon));
+  if (distance > Number(cfg.radiusM || 10)) {
+    throw new Error(
+      'Absen masuk ditolak. Jarak dari Gudang ' + cfg.name + ': ' +
+      distance.toFixed(1) + ' m. Batas maksimal ' + Number(cfg.radiusM || 10) + ' m.'
+    );
+  }
+  return distance;
+}
+
+function distanceMeters_(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function normalizeWarehouse_(s) {
+  const v = String(s || '').trim().toUpperCase();
+  return WAREHOUSES[v] ? v : '';
 }
 
 function lateMinutes_(actual, scheduled) {

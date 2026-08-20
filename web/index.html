@@ -148,6 +148,23 @@
     .statusline{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid rgba(224,229,238,.72)}
     .schedule-note{font-size:12px;color:#68758b;margin-top:8px}
     #checkIn{font-size:15px}#checkOut{font-size:15px}
+    .warehouse-home{padding:18px 14px 28px}
+    .warehouse-home h2{margin:4px 4px 6px;font-size:22px}
+    .warehouse-home .intro{margin:0 4px 16px;color:var(--muted);font-size:13px;line-height:1.55}
+    .warehouse-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .warehouse-card{
+      border:1px solid rgba(255,255,255,.84);border-radius:20px;padding:18px 15px;text-align:left;
+      background:linear-gradient(160deg,rgba(255,255,255,.94),rgba(250,239,244,.85));
+      box-shadow:var(--shadow);color:var(--ink);min-height:128px;position:relative;overflow:hidden
+    }
+    .warehouse-card::after{content:"倉";position:absolute;right:10px;bottom:-10px;font-size:62px;font-weight:900;color:rgba(219,120,152,.08)}
+    .warehouse-card strong{display:block;font-size:17px;margin:8px 0 5px;position:relative;z-index:1}
+    .warehouse-card small{display:block;color:var(--muted);font-size:11px;line-height:1.45;position:relative;z-index:1}
+    .warehouse-icon{width:34px;height:34px;border-radius:12px;background:var(--navy);color:#fff;display:grid;place-items:center;font-weight:900;position:relative;z-index:1}
+    .warehouse-current{margin:12px 14px 0;padding:10px 12px;border-radius:16px;background:rgba(255,255,255,.78);border:1px solid rgba(255,255,255,.8);display:flex;align-items:center;justify-content:space-between;gap:10px;box-shadow:0 8px 24px rgba(48,58,82,.07)}
+    .warehouse-current b{font-size:13px}.warehouse-current span{display:block;font-size:10px;color:var(--muted);margin-top:2px}
+    .warehouse-switch{border:0;background:var(--navy);color:#fff;border-radius:11px;padding:9px 11px;font-size:11px;font-weight:800;white-space:nowrap}
+    .warehouse-lock{margin-top:9px;padding:9px 10px;border-radius:12px;font-size:11px;font-weight:750;background:#fff0f1;color:#a54450}
     @media (min-width:540px){
       .page{padding:16px 18px}.tabs{margin-left:18px;margin-right:18px}.card{padding:20px}
       #checkIn,#checkOut{width:calc(50% - 5px)}#checkOut{margin-left:6px}
@@ -168,13 +185,37 @@
     </div>
   </header>
 
-  <nav class="tabs">
+  <section id="warehouseHome" class="warehouse-home">
+    <h2>Pilih Gudang</h2>
+    <p class="intro">Setiap gudang memiliki menu Absensi, Riwayat, dan Dashboard sendiri. Data tidak dicampur antar gudang.</p>
+    <div class="warehouse-grid">
+      <button class="warehouse-card" data-warehouse="KEBANDUNGAN">
+        <span class="warehouse-icon">K</span><strong>Kebandungan</strong><small>Absensi & data khusus Gudang Kebandungan</small>
+      </button>
+      <button class="warehouse-card" data-warehouse="PARAKAN">
+        <span class="warehouse-icon">P</span><strong>Parakan</strong><small>Absensi & data khusus Gudang Parakan</small>
+      </button>
+      <button class="warehouse-card" data-warehouse="CM">
+        <span class="warehouse-icon">C</span><strong>CM</strong><small>Absensi & data khusus Gudang CM</small>
+      </button>
+      <button class="warehouse-card" data-warehouse="NANAS">
+        <span class="warehouse-icon">N</span><strong>Nanas</strong><small>Absensi & data khusus Gudang Nanas</small>
+      </button>
+    </div>
+  </section>
+
+  <div id="warehouseCurrent" class="warehouse-current hidden">
+    <div><b id="warehouseTitle">Gudang</b><span id="warehouseMeta">Menu terpisah</span></div>
+    <button id="changeWarehouse" class="warehouse-switch">Ganti Gudang</button>
+  </div>
+
+  <nav id="appTabs" class="tabs hidden">
     <button class="tab on" data-p="absen">Absensi</button>
     <button class="tab" data-p="riwayat">Riwayat</button>
     <button class="tab" data-p="admin">Dashboard</button>
   </nav>
 
-  <main>
+  <main id="appMain" class="hidden">
     <section id="absen" class="page on">
       <div class="card status-card">
         <div class="row">
@@ -186,6 +227,7 @@
         </div>
         <div class="statusline">
           <span id="serverBadge" class="pill warn">Server belum dikonfigurasi</span>
+          <span id="warehouseBadge" class="pill">Pilih gudang</span>
           <span id="scheduleBadge" class="pill sakura">Pilih divisi</span>
           <span id="deviceBadge" class="pill">Device lokal</span>
         </div>
@@ -223,7 +265,7 @@
 
       <div class="card">
         <h2>Lokasi GPS</h2>
-        <div id="gpsState" class="muted">Lokasi belum diambil.</div>
+        <div id="gpsState" class="muted">Lokasi belum diambil.</div><div id="warehouseGeofenceState" class="schedule-note"></div>
         <button class="btn primary" id="getGps">Tes / Ambil Lokasi</button>
       </div>
 
@@ -248,7 +290,7 @@
 
     <section id="riwayat" class="page">
       <div class="card">
-        <h2>Riwayat pada Device Ini</h2>
+        <h2>Riwayat <span id="historyWarehouseLabel"></span></h2>
         <div id="history"></div>
         <div class="notice">Data pusat berada di Google Sheets. Riwayat lokal hanya cache untuk akses cepat dan akan diselaraskan dengan server.</div>
       </div>
@@ -262,7 +304,7 @@
       </div>
 
       <div class="card">
-        <h2>Rekap Minggu Ini</h2>
+        <h2>Rekap Minggu Ini · <span id="summaryWarehouseLabel"></span></h2>
         <div class="grid">
           <div class="stat"><span class="muted">Hari masuk</span><b id="weekDays">0</b></div>
           <div class="stat"><span class="muted">Jam lembur</span><b id="weekOt">0</b></div>
@@ -310,14 +352,27 @@ const CFG = window.ABSENSI_CONFIG || {};
 const keyRecords = 'absensi.records.v3';
 const keyEmployee = 'absensi.employee';
 const keyDivision = 'absensi.division';
+const keyWarehouse = 'absensi.warehouse';
 const keySettings = 'absensi.settings.v2';
-const migrationKey = 'absensi.migrated.v1.7';
+const migrationKey = 'absensi.migrated.v1.9';
 
 const SCHEDULES = Object.freeze({
   ADMIN:'08:00',
   PACKING:'09:00',
   GUDANG:'09:00'
 });
+
+const WAREHOUSE_LABELS = Object.freeze({
+  KEBANDUNGAN:'Kebandungan',
+  PARAKAN:'Parakan',
+  CM:'CM',
+  NANAS:'Nanas'
+});
+
+function warehouses(){ return CFG.WAREHOUSES || {}; }
+function warehouse(){ return String(localStorage.getItem(keyWarehouse)||'').trim().toUpperCase(); }
+function warehouseLabel(v){ return WAREHOUSE_LABELS[String(v||'').toUpperCase()] || ''; }
+function warehouseConfig(v=warehouse()){ return warehouses()[String(v||'').toUpperCase()] || null; }
 
 let stream = null;
 let photoData = '';
@@ -346,7 +401,7 @@ function localDate(d=new Date()){ return d.getFullYear()+'-'+String(d.getMonth()
 function money(n){ return 'Rp'+Math.round(Number(n)||0).toLocaleString('id-ID'); }
 function delay(ms){ return new Promise(resolve=>setTimeout(resolve,ms)); }
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function localToday(){ const n=employee(), day=localDate(); return records().find(r=>r.employee===n&&r.date===day); }
+function localToday(){ const n=employee(), day=localDate(), w=warehouse(); return records().find(r=>r.employee===n&&r.date===day&&String(r.warehouse||'').toUpperCase()===w); }
 
 function tick(){
   const d=new Date();
@@ -358,10 +413,60 @@ function tick(){
 function updateEmployee(){
   const n=localStorage.getItem(keyEmployee)||'';
   const d=localStorage.getItem(keyDivision)||'';
+  const w=warehouse();
   $('employee').value=n;
   $('division').value=d;
-  $('employeeTop').textContent=n ? n+(d?' · '+divisionLabel(d):'') : 'Belum memilih karyawan';
+  $('employeeTop').textContent=n ? n+(w?' · '+warehouseLabel(w):'')+(d?' · '+divisionLabel(d):'') : (w?warehouseLabel(w):'Belum memilih gudang');
   updateScheduleUi();
+  updateWarehouseUi();
+}
+
+function updateWarehouseUi(){
+  const w=warehouse();
+  const cfg=warehouseConfig(w);
+  const label=warehouseLabel(w);
+  $('warehouseBadge').textContent=label||'Pilih gudang';
+  $('warehouseBadge').className='pill '+(w?'ok':'warn');
+  $('warehouseTitle').textContent=w?'Gudang '+label:'Gudang';
+  $('historyWarehouseLabel').textContent=label||'';
+  $('summaryWarehouseLabel').textContent=label||'';
+  if(cfg&&Number.isFinite(Number(cfg.LAT))&&Number.isFinite(Number(cfg.LON))){
+    $('warehouseMeta').textContent='Geofence '+Number(cfg.RADIUS_M||10)+' m aktif';
+    $('warehouseGeofenceState').innerHTML='<span class="pill ok">Area '+Number(cfg.RADIUS_M||10)+' m aktif · '+escapeHtml(label)+'</span>';
+  }else if(w){
+    $('warehouseMeta').textContent='Koordinat geofence belum diisi';
+    $('warehouseGeofenceState').innerHTML='<div class="warehouse-lock">Koordinat '+escapeHtml(label)+' belum dikonfigurasi. Absen masuk dikunci sampai titik lokasi diisi.</div>';
+  }else{
+    $('warehouseMeta').textContent='Pilih gudang';
+    $('warehouseGeofenceState').textContent='';
+  }
+}
+
+function selectWarehouse(code){
+  const w=String(code||'').toUpperCase();
+  if(!WAREHOUSE_LABELS[w]) return;
+  localStorage.setItem(keyWarehouse,w);
+  $('warehouseHome').classList.add('hidden');
+  $('warehouseCurrent').classList.remove('hidden');
+  $('appTabs').classList.remove('hidden');
+  $('appMain').classList.remove('hidden');
+  document.querySelectorAll('.tab,.page').forEach(x=>x.classList.remove('on'));
+  const firstTab=document.querySelector('.tab[data-p="absen"]');
+  if(firstTab) firstTab.classList.add('on');
+  $('absen').classList.add('on');
+  resetCapture();
+  updateEmployee();
+  render();
+  hydrateTodayFromServer(true);
+}
+
+function showWarehouseHome(){
+  localStorage.removeItem(keyWarehouse);
+  $('warehouseHome').classList.remove('hidden');
+  $('warehouseCurrent').classList.add('hidden');
+  $('appTabs').classList.add('hidden');
+  $('appMain').classList.add('hidden');
+  $('employeeTop').textContent='Pilih gudang';
 }
 
 function updateScheduleUi(){
@@ -445,15 +550,43 @@ function getGps(){
         accuracy:pos.coords.accuracy,
         at:new Date().toISOString()
       };
+      const cfg=warehouseConfig();
+      let area='';
+      if(cfg&&Number.isFinite(Number(cfg.LAT))&&Number.isFinite(Number(cfg.LON))){
+        const dist=distanceMeters(gps.lat,gps.lon,Number(cfg.LAT),Number(cfg.LON));
+        const radius=Number(cfg.RADIUS_M||10);
+        area='<br><span class="pill '+(dist<=radius?'ok':'bad')+'">'+(dist<=radius?'Dalam area':'Di luar area')+'</span> Jarak '+dist.toFixed(1)+' m / batas '+radius+' m';
+      }
       $('gpsState').innerHTML=
         '<span class="pill ok">GPS siap</span><br>Lat '+gps.lat.toFixed(6)+
-        ' | Lon '+gps.lon.toFixed(6)+' | Akurasi '+Math.round(gps.accuracy)+' m';
+        ' | Lon '+gps.lon.toFixed(6)+' | Akurasi '+Math.round(gps.accuracy)+' m'+area;
       resolve(gps);
     },err=>{
       $('gpsState').textContent='GPS gagal: '+err.message;
       reject(err);
     },{enableHighAccuracy:true,timeout:18000,maximumAge:0});
   });
+}
+
+function distanceMeters(lat1,lon1,lat2,lon2){
+  const R=6371000,toRad=v=>v*Math.PI/180;
+  const dLat=toRad(lat2-lat1),dLon=toRad(lon2-lon1);
+  const a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+function validateWarehouseGeofence(point){
+  const w=warehouse();
+  const label=warehouseLabel(w);
+  const cfg=warehouseConfig(w);
+  if(!w) throw new Error('Pilih gudang terlebih dahulu.');
+  if(!cfg||!Number.isFinite(Number(cfg.LAT))||!Number.isFinite(Number(cfg.LON))){
+    throw new Error('Koordinat Gudang '+label+' belum dikonfigurasi. Absen masuk dikunci.');
+  }
+  const radius=Number(cfg.RADIUS_M||10);
+  const dist=distanceMeters(Number(point.lat),Number(point.lon),Number(cfg.LAT),Number(cfg.LON));
+  if(dist>radius) throw new Error('Anda berada '+dist.toFixed(1)+' m dari Gudang '+label+'. Batas absen masuk '+radius+' m.');
+  return dist;
 }
 
 function jsonp(params, timeoutMs=12000){
@@ -484,8 +617,8 @@ function jsonp(params, timeoutMs=12000){
 }
 
 async function serverToday(){
-  if(!endpoint()||!employee()) return null;
-  const data=await jsonp({action:'today',employee:employee(),date:localDate()});
+  if(!endpoint()||!employee()||!warehouse()) return null;
+  const data=await jsonp({action:'today',employee:employee(),warehouse:warehouse(),date:localDate()});
   if(!data?.ok) throw new Error(data?.error||'Status server gagal.');
   return data.record||null;
 }
@@ -499,6 +632,7 @@ function mergeServerToday(r){
   const merged=Object.assign({},existing,{
     id:r.id,
     employee:r.employee,
+    warehouse:r.warehouse||existing.warehouse||warehouse(),
     division:r.division||existing.division||'',
     date:r.date,
     in:r.in||existing.in||'',
@@ -520,7 +654,7 @@ function mergeServerToday(r){
 }
 
 async function hydrateTodayFromServer(silent=true){
-  if(syncBusy||!endpoint()||!employee()) return null;
+  if(syncBusy||!endpoint()||!employee()||!warehouse()) return null;
   syncBusy=true;
   try{
     const r=await serverToday();
@@ -575,7 +709,9 @@ function resetCapture(){
 async function checkIn(){
   const name=employee();
   const div=division();
+  const wh=warehouse();
 
+  if(!wh) return alert('Pilih gudang terlebih dahulu.');
   if(!name) return alert('Isi dan simpan nama karyawan terlebih dahulu.');
   if(!div) return alert('Pilih divisi Admin, Packing, atau Gudang terlebih dahulu.');
 
@@ -591,11 +727,13 @@ async function checkIn(){
     $('checkIn').disabled=true;
     await autoSelfie();
     if(!gps) await getGps();
+    validateWarehouseGeofence(gps);
 
     const now=new Date();
     const record={
       id:String(Date.now())+'-'+Math.random().toString(36).slice(2,8),
       employee:name,
+      warehouse:wh,
       division:div,
       date:localDate(now),
       in:now.toISOString(),
@@ -688,7 +826,8 @@ async function checkOut(){
 }
 
 function renderHistory(){
-  const items=records(), box=$('history');
+  const w=warehouse();
+  const items=records().filter(r=>String(r.warehouse||'').toUpperCase()===w), box=$('history');
   if(!items.length){
     box.innerHTML='<p class="muted">Belum ada data pada device ini.</p>';
     return;
@@ -699,7 +838,7 @@ function renderHistory(){
     const late=Number(r.lateMinutes)||0;
     return '<div class="record">'+
       '<div class="row"><div><b>'+escapeHtml(r.employee)+'</b>'+
-      '<span class="muted">'+escapeHtml(r.date)+' · '+escapeHtml(div)+'</span></div>'+
+      '<span class="muted">'+escapeHtml(r.date)+' · '+escapeHtml(warehouseLabel(r.warehouse))+' · '+escapeHtml(div)+'</span></div>'+
       (r.inPhoto?'<img class="photo-thumb" src="'+r.inPhoto+'">':'')+
       '</div>'+
       '<div class="muted" style="margin-top:7px">'+
@@ -724,9 +863,9 @@ async function refreshSummary(){
   const st=settings();
   let days=0,ot=0,late=0,source='Lokal';
 
-  if(endpoint()&&employee()){
+  if(endpoint()&&employee()&&warehouse()){
     try{
-      const data=await jsonp({action:'weekSummary',employee:employee()});
+      const data=await jsonp({action:'weekSummary',employee:employee(),warehouse:warehouse()});
       if(data?.ok){
         days=Number(data.days)||0;
         ot=Number(data.overtime)||0;
@@ -738,7 +877,7 @@ async function refreshSummary(){
 
   if(source==='Lokal'){
     const start=startOfWeek();
-    const w=records().filter(r=>r.employee===employee()&&r.in&&new Date(r.in)>=start);
+    const w=records().filter(r=>r.employee===employee()&&String(r.warehouse||'').toUpperCase()===warehouse()&&r.in&&new Date(r.in)>=start);
     days=new Set(w.map(r=>r.date)).size;
     ot=w.reduce((x,r)=>x+(Number(r.overtime)||0),0);
     late=w.reduce((x,r)=>x+(Number(r.lateMinutes)||0),0);
@@ -759,7 +898,7 @@ function renderAdmin(){
   $('syncState').textContent=endpoint()?'Server pusat dikonfigurasi.':'Mode lokal - URL server belum diisi.';
   $('syncState').className='muted '+(endpoint()?'sync-ok':'sync-off');
   $('owner').textContent=CFG.HOST_LABEL||'Host backend';
-  $('version').textContent=CFG.APP_VERSION||'1.7.0';
+  $('version').textContent=CFG.APP_VERSION||'1.9.0';
   $('serverBadge').textContent=endpoint()?'Server dikonfigurasi':'Server belum dikonfigurasi';
   $('serverBadge').className='pill '+(endpoint()?'ok':'warn');
 }
@@ -796,6 +935,9 @@ document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{
   $(b.dataset.p).classList.add('on');
   render();
 });
+
+document.querySelectorAll('.warehouse-card').forEach(b=>b.onclick=()=>selectWarehouse(b.dataset.warehouse));
+$('changeWarehouse').onclick=showWarehouseHome;
 
 $('division').onchange=updateScheduleUi;
 
@@ -845,6 +987,7 @@ $('copyJson').onclick=async()=>{
   const data=JSON.stringify({
     owner:CFG.HOST_LABEL||'',
     employee:localStorage.getItem(keyEmployee)||'',
+    warehouse:warehouse(),
     division:localStorage.getItem(keyDivision)||'',
     records:records(),
     settings:settings()
@@ -867,6 +1010,14 @@ $('clearData').onclick=()=>{
 };
 
 updateEmployee();
+if(warehouse()){
+  $('warehouseHome').classList.add('hidden');
+  $('warehouseCurrent').classList.remove('hidden');
+  $('appTabs').classList.remove('hidden');
+  $('appMain').classList.remove('hidden');
+}else{
+  showWarehouseHome();
+}
 tick();
 setInterval(tick,1000);
 render();
