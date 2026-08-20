@@ -1,5 +1,5 @@
 window.ABSENSI_CONFIG = Object.freeze({
-  GAS_ENDPOINT: 'https://script.google.com/macros/s/AKfycbxnFrseN-6omra612EjbY8Wzi8V8AWdDt5lEjz8Rd5v5lUvrL5pq5ZM1uSP4_i_aROT/exec',
+  GAS_ENDPOINT: 'https://script.google.com/macros/s/AKfycbySsGCmwVJ8zNW9UjtmnTCU3HieSsG7JN7atUwahIkbX4_zt0rMC88JDDD1ztR-N_6R/exec',
   HOST_LABEL: 'djarotsantoso2@gmail.com',
   APP_VERSION: '1.9.0',
   WAREHOUSES: Object.freeze({
