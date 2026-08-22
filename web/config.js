@@ -1,7 +1,11 @@
 window.ABSENSI_CONFIG = Object.freeze({
   GAS_ENDPOINT: 'https://script.google.com/macros/s/AKfycbySsGCmwVJ8zNW9UjtmnTCU3HieSsG7JN7atUwahIkbX4_zt0rMC88JDDD1ztR-N_6R/exec',
-  HOST_LABEL: 'djarotsantoso2@gmail.com',
-  APP_VERSION: '1.9.3',
+  HOST_LABEL: 'djarotsantoso2@gmail.com · suryowidiantoro682@gmail.com',
+  HOSTS: Object.freeze([
+    'djarotsantoso2@gmail.com',
+    'suryowidiantoro682@gmail.com'
+  ]),
+  APP_VERSION: '1.9.4',
   WAREHOUSES: Object.freeze({
     KEBANDUNGAN: Object.freeze({NAME:'Kebandungan', LAT:-6.6335959, LON:106.7761478, RADIUS_M:10}),
     PARAKAN: Object.freeze({NAME:'Parakan', LAT:-6.622239, LON:106.771941, RADIUS_M:10}),

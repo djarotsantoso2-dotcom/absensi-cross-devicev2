@@ -1,6 +1,15 @@
-const APP_VERSION = '1.9.2';
+const APP_VERSION = '1.9.4';
 const SHEET_NAME = 'Absensi';
 const DEFAULT_NORMAL_OUT = '17:30';
+
+const HOST_EMAILS = Object.freeze([
+  'djarotsantoso2@gmail.com',
+  'suryowidiantoro682@gmail.com'
+]);
+
+function hostLabel_() {
+  return HOST_EMAILS.join(' · ');
+}
 
 const DIVISION_STARTS = Object.freeze({
   ADMIN: '08:00',
@@ -32,7 +41,8 @@ function doGet(e) {
         ok: true,
         service: 'Absensi Kamera GPS',
         version: APP_VERSION,
-        host: getProp_('HOST_EMAIL',''),
+        host: hostLabel_(),
+        hosts: HOST_EMAILS,
         normalOut: getProp_('NORMAL_OUT', DEFAULT_NORMAL_OUT),
         schedules: DIVISION_STARTS,
         warehouses: WAREHOUSES,
@@ -96,7 +106,7 @@ function saveCheckin_(sh, r) {
     id, employee, division, date, inLocal, scheduledStart, lateMinutes,
     val_(r.inGps,'lat'), val_(r.inGps,'lon'), val_(r.inGps,'accuracy'), photoUrl,
     String(r.work || '').trim(), '', '', '', '', 0,
-    getProp_('HOST_EMAIL',''), 'MASUK', serverNow, serverNow, warehouse
+    hostLabel_(), 'MASUK', serverNow, serverNow, warehouse
   ]);
 
   return {ok:true,row:sh.getLastRow(),record:publicRecord_(sh, sh.getLastRow())};
@@ -122,7 +132,7 @@ function saveCheckout_(sh, r) {
     outLocal,
     val_(r.outGps,'lat'), val_(r.outGps,'lon'), val_(r.outGps,'accuracy'),
     overtime,
-    getProp_('HOST_EMAIL',''), 'PULANG',
+    hostLabel_(), 'PULANG',
     sh.getRange(row,20).getValue() || serverNow,
     serverNow
   ]]);

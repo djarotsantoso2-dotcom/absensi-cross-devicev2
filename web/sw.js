@@ -1,4 +1,4 @@
-const CACHE = 'absensi-gps-v1.9.3';
+const CACHE = 'absensi-gps-v1.9.4';
 const ASSETS = ['./', './index.html', './config.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', event => {
