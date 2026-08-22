@@ -7,9 +7,9 @@ window.ABSENSI_CONFIG = Object.freeze({
   ]),
   APP_VERSION: '1.9.4',
   WAREHOUSES: Object.freeze({
-    KEBANDUNGAN: Object.freeze({NAME:'Kebandungan', LAT:-6.6335959, LON:106.7761478, RADIUS_M:10}),
+    KEBANDUNGAN: Object.freeze({NAME:'Kebandungan', LAT:-6.63352, LON:106.77606, RADIUS_M:10}),
     PARAKAN: Object.freeze({NAME:'Parakan', LAT:-6.622239, LON:106.771941, RADIUS_M:10}),
-    CM: Object.freeze({NAME:'CM', LAT:-6.6264890, LON:106.7792440, RADIUS_M:10}),
+    CM: Object.freeze({NAME:'CM', LAT:-6.6265, LON:106.7791667, RADIUS_M:10}),
     NANAS: Object.freeze({NAME:'Nanas', LAT:-6.618239, LON:106.784676, RADIUS_M:10})
   })
 });
