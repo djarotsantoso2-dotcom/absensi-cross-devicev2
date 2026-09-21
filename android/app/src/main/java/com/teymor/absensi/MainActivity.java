@@ -88,6 +88,7 @@ public class MainActivity extends Activity {
         java.util.ArrayList<String> p = new java.util.ArrayList<>();
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) p.add(Manifest.permission.CAMERA);
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) p.add(Manifest.permission.ACCESS_FINE_LOCATION);
+        if (p.contains(Manifest.permission.ACCESS_FINE_LOCATION)) p.add(Manifest.permission.ACCESS_COARSE_LOCATION);
         if (!p.isEmpty()) requestPermissions(p.toArray(new String[0]), REQ_PERMISSIONS);
     }
 

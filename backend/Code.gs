@@ -122,6 +122,13 @@ function saveCheckout_(sh, r) {
   if (!row) throw new Error('Data absen masuk hari ini tidak ditemukan');
 
   const existing = publicRecord_(sh, row);
+  const warehouse = normalizeWarehouse_(r.warehouse);
+  if (!employee || !warehouse || cleanName_(existing.employee).toLowerCase() !== employee.toLowerCase() || existing.warehouse !== warehouse || existing.date !== date) {
+    throw new Error('Data absen masuk tidak cocok dengan karyawan, gudang, atau tanggal hari ini');
+  }
+  if (!r.outGps || !Number.isFinite(r.outGps.lat) || !Number.isFinite(r.outGps.lon) || Math.abs(r.outGps.lat) > 90 || Math.abs(r.outGps.lon) > 180) {
+    throw new Error('Koordinat GPS pulang tidak valid');
+  }
   if (existing.outLocal) return {ok:true,duplicate:true,record:existing};
 
   const outLocal = format_(serverNow, 'HH:mm:ss');
@@ -248,13 +255,13 @@ function findRowByEmployeeDate_(sh,employee,date) {
   const last = sh.getLastRow();
   if (last < 2) return 0;
 
-  const rows = sh.getRange(2,2,last-1,3).getDisplayValues();
-  const n = String(employee).trim().toLowerCase();
+  const rows = sh.getRange(2,2,last-1,3).getValues();
+  const n = cleanName_(employee).toLowerCase();
 
   for (let i=0;i<rows.length;i++) {
     if (
-      String(rows[i][0]).trim().toLowerCase() === n &&
-      String(rows[i][2]) === String(date)
+      cleanName_(rows[i][0]).toLowerCase() === n &&
+      dateKey_(rows[i][2]) === String(date)
     ) return i+2;
   }
   return 0;
@@ -263,13 +270,13 @@ function findRowByEmployeeDate_(sh,employee,date) {
 function findRowByEmployeeDateWarehouse_(sh,employee,date,warehouse) {
   const last = sh.getLastRow();
   if (last < 2) return 0;
-  const rows = sh.getRange(2,2,last-1,21).getDisplayValues();
-  const n = String(employee).trim().toLowerCase();
+  const rows = sh.getRange(2,2,last-1,21).getValues();
+  const n = cleanName_(employee).toLowerCase();
   const w = String(warehouse).trim().toUpperCase();
   for (let i=0;i<rows.length;i++) {
     if (
-      String(rows[i][0]).trim().toLowerCase() === n &&
-      String(rows[i][2]) === String(date) &&
+      cleanName_(rows[i][0]).toLowerCase() === n &&
+      dateKey_(rows[i][2]) === String(date) &&
       String(rows[i][20] || '').trim().toUpperCase() === w
     ) return i+2;
   }
@@ -283,12 +290,12 @@ function publicRecord_(sh,row) {
     employee:String(v[1]||''),
     warehouse:String(v[21]||''),
     division:String(v[2]||''),
-    date:String(v[3]||''),
-    inLocal:String(v[4]||''),
+    date:dateKey_(v[3]),
+    inLocal:v[4] instanceof Date ? format_(v[4], 'HH:mm:ss') : String(v[4]||''),
     scheduledStart:String(v[5]||''),
     lateMinutes:Number(v[6])||0,
     work:String(v[11]||''),
-    outLocal:String(v[12]||''),
+    outLocal:v[12] instanceof Date ? format_(v[12], 'HH:mm:ss') : String(v[12]||''),
     overtime:Number(v[16])||0,
     status:String(v[18]||'')
   };
@@ -392,6 +399,10 @@ function getProp_(key, fallback) {
   return value == null || value === '' ? fallback : value;
 }
 
+function dateKey_(value) {
+  return value instanceof Date ? format_(value, 'yyyy-MM-dd') : String(value || '').trim();
+}
+
 function cleanName_(s) {
   return String(s||'').replace(/\s+/g,' ').trim().slice(0,80);
 }
@@ -407,7 +418,7 @@ function val_(o,k) {
 function format_(d,pattern) {
   return Utilities.formatDate(
     d,
-    Session.getScriptTimeZone() || 'Asia/Jakarta',
+    'Asia/Jakarta',
     pattern
   );
 }
@@ -426,3 +437,4 @@ function output_(obj, callback) {
     .createTextOutput(json)
     .setMimeType(ContentService.MimeType.JSON);
 }
+
