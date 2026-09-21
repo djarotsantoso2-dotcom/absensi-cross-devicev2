@@ -5,7 +5,7 @@ window.ABSENSI_CONFIG = Object.freeze({
     'djarotsantoso2@gmail.com',
     'suryowidiantoro682@gmail.com'
   ]),
-  APP_VERSION: '1.9.7',
+  APP_VERSION: '1.9.8',
   WAREHOUSES: Object.freeze({
     KEBANDUNGAN: Object.freeze({NAME:'Kebandungan', LAT:-6.633483, LON:106.775966, RADIUS_M:10}),
     PARAKAN: Object.freeze({NAME:'Parakan', LAT:-6.622239, LON:106.771941, RADIUS_M:10}),
@@ -13,6 +13,62 @@ window.ABSENSI_CONFIG = Object.freeze({
     NANAS: Object.freeze({NAME:'Nanas', LAT:-6.618239, LON:106.784676, RADIUS_M:10})
   })
 });
+
+/*
+ * v1.9.8 Endpoint migration
+ * Membersihkan endpoint lama yang pernah tersimpan di device agar semua device
+ * selalu jatuh ke GAS_ENDPOINT resmi di atas.
+ * Juga menormalkan cache jadwal lama yang terbaca sebagai Date tahun 1899.
+ */
+(function installV198Migration(){
+  const SETTINGS_KEY = 'absensi.settings.v2';
+  const RECORDS_KEY = 'absensi.records.v3';
+
+  function migrate(){
+    try{
+      const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+      if(raw && typeof raw === 'object' && raw.endpoint){
+        raw.endpoint = '';
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(raw));
+      }
+    }catch(_){
+      localStorage.removeItem(SETTINGS_KEY);
+    }
+
+    try{
+      const rows = JSON.parse(localStorage.getItem(RECORDS_KEY) || '[]');
+      if(Array.isArray(rows)){
+        let changed = false;
+        rows.forEach(r => {
+          const s = String(r && r.scheduledStart || '');
+          if(!/^\d{1,2}:\d{2}(?::\d{2})?$/.test(s)){
+            const div = String(r && r.division || '').toUpperCase();
+            const next = div === 'ADMIN' ? '08:00' : ((div === 'PACKING' || div === 'GUDANG') ? '09:00' : '');
+            if(next && r.scheduledStart !== next){
+              r.scheduledStart = next;
+              changed = true;
+            }
+          }
+        });
+        if(changed) localStorage.setItem(RECORDS_KEY, JSON.stringify(rows));
+      }
+    }catch(_){}
+
+    // Setelah inline script index.html selesai dibuat, render ulang agar hasil migrasi langsung terlihat.
+    setTimeout(() => {
+      try{
+        if(typeof window.render === 'function') window.render();
+        if(typeof window.testServer === 'function') window.testServer();
+      }catch(_){}
+    }, 0);
+  }
+
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', migrate, {once:true});
+  }else{
+    migrate();
+  }
+})();
 
 /*
  * Geofence button lock v1.9.3

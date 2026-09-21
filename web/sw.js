@@ -1,4 +1,4 @@
-const CACHE = 'absensi-gps-v1.9.7-csflow-no-dashboard';
+const CACHE = 'absensi-gps-v1.9.8-endpoint-fix';
 const ASSETS = ['./', './index.html', './config.js', './manifest.webmanifest', './cs-store-flow-logo.png', './icon-192.png', './icon-512.png', './icon-192.png?v=1.9.7', './icon-512.png?v=1.9.7'];
 const assetUrls = new Set(ASSETS.map(path => new URL(path, self.registration.scope).href));
 self.addEventListener('install', event => {
