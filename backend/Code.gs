@@ -1,6 +1,7 @@
 const APP_VERSION = '1.9.4';
 const SHEET_NAME = 'Absensi';
 const DEFAULT_NORMAL_OUT = '17:30';
+const PRIMARY_SPREADSHEET_ID = '1yELZY2kInp3AiDx7jvQBpAlgWF238oGN-qfZlETS0YQ';
 
 const HOST_EMAILS = Object.freeze([
   'djarotsantoso2@gmail.com',
@@ -199,10 +200,7 @@ function weekSummary_(employee, warehouse) {
 }
 
 function getSheet_() {
-  const spreadsheetId = getProp_('SPREADSHEET_ID','');
-  if (!spreadsheetId) throw new Error('Script Property SPREADSHEET_ID belum diisi');
-
-  const ss = SpreadsheetApp.openById(spreadsheetId);
+  const ss = SpreadsheetApp.openById(PRIMARY_SPREADSHEET_ID);
   let sh = ss.getSheetByName(SHEET_NAME);
   if (!sh) sh = ss.insertSheet(SHEET_NAME);
 
