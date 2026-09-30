@@ -10,7 +10,7 @@ window.ABSENSI_CONFIG = Object.freeze({
     KEBANDUNGAN: Object.freeze({NAME:'Kebandungan', LAT:-6.633483, LON:106.775966, RADIUS_M:10}),
     PARAKAN: Object.freeze({NAME:'Parakan', LAT:-6.622239, LON:106.771941, RADIUS_M:10}),
     CM: Object.freeze({NAME:'CM', LAT:-6.6265, LON:106.7791667, RADIUS_M:10}),
-    NANAS: Object.freeze({NAME:'Nanas', LAT:-6.618239, LON:106.784676, RADIUS_M:10})
+    NANAS: Object.freeze({NAME:'Nanas', LAT:-6.618490474658237, LON:106.78478377021241, RADIUS_M:10})
   })
 });
 
