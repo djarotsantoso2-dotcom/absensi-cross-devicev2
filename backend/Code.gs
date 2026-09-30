@@ -209,7 +209,7 @@ function getSheet_() {
 }
 
 function ensureHeader_(sh) {
-  const last = sh.getLastRow();
+  consta last = sh.getLastRow();
   const legacyHeaders = HEADERS.slice(0,21);
 
   if (last === 0) {
