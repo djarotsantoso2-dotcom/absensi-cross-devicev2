@@ -1,0 +1,85 @@
+ABSENSI CS.FLOW v1.9.9 — PERBAIKAN SERVER TIMEOUT SAAT PULANG
+1 Oktober 2026
+
+STATUS
+Kode sudah diperbaiki dan 23 pengujian lulus. Pembaruan otomatis ke GitHub
+ditolak dengan 403: Resource not accessible by integration. Aplikasi aktif
+dan backend Apps Script belum berubah. Ikuti pemasangan manual di bawah.
+
+MASALAH YANG DIPERBAIKI
+Pembacaan server sebelumnya dibatasi 12 detik. Pada pemeriksaan langsung,
+endpoint health berhasil tetapi membutuhkan 17,28 detik. Pembacaan status
+sebelum absen pulang berada di luar penanganan error dan menghentikan proses
+sebelum data pulang dikirim. Foto masuk juga ikut terkirim kembali saat pulang.
+
+PERUBAHAN
+- Batas waktu setiap pembacaan server menjadi 45 detik, dengan percobaan ulang
+  untuk kegagalan koneksi. Permintaan status yang sama digabung selama berjalan.
+- Jika data masuk sudah ada di perangkat, absen pulang langsung dikirim dengan
+  validasi akhir oleh server. Perangkat lain tetap membaca data masuk dari server.
+- Data pulang hanya berisi ID, nama, gudang, tanggal, dan GPS pulang.
+- Permintaan pulang yang belum terkonfirmasi disimpan terpisah di perangkat.
+  Tekan Absen Pulang untuk mencoba kembali. Status belum dianggap sudah pulang.
+- Server mengonfirmasi hasil tiap permintaan, termasuk alasan penolakan.
+  Frontend tetap kompatibel dengan backend lama melalui pemeriksaan baris hari ini.
+- Baris absen masuk dicari melalui ID; pencarian data hari ini membaca blok
+  terbaru dahulu untuk mengurangi pembacaan seluruh riwayat.
+- Waktu pulang dan lembur tetap ditentukan server. Pengiriman ulang tidak
+  mengganti waktu pulang yang sudah tersimpan.
+- Ada penanda proses mengambil GPS, mengirim, dan memeriksa konfirmasi.
+- Versi PWA/Android 1.9.9, versionCode 199, cache PWA diperbarui.
+
+PASANG PEMBARUAN APLIKASI DI GITHUB (jika belum diterapkan otomatis)
+1. Ekstrak ZIP ini.
+2. Buka https://github.com/djarotsantoso2-dotcom/absensi-cross-devicev2
+3. Ganti file di folder web dengan file dari folder web paket ini.
+4. Ganti android/app/build.gradle dan .github/workflows/android-apk.yml
+   dengan file yang lokasinya sama pada paket. Ganti backend/Code.gs di repo juga.
+   File Code.gs di GitHub berfungsi sebagai sumber; ini belum mengganti server.
+5. Commit ke main. Tunggu workflow Deploy PWA to GitHub Pages berhasil.
+6. Tutup aplikasi/browser, buka kembali, lalu muat ulang. Footer harus 1.9.9.
+   APK adalah WebView yang membuka halaman aplikasi, sehingga pembaruan web
+   juga dipakai APK lama setelah halaman dimuat ulang.
+7. APK baru dibangun oleh workflow Build Android APK. Nama artifact:
+   Absensi-CSFlow-v1.9.9; nama file apk/Absensi_CSFlow_v1.9.9.apk.
+   Pasang APK baru setelah build berhasil bila ingin metadata versi Android 1.9.9.
+
+PASANG BACKEND GOOGLE APPS SCRIPT
+Langkah ini tetap diperlukan untuk mengaktifkan konfirmasi tiap permintaan,
+alasan penolakan, dan optimasi pencarian server.
+1. Buka Google Sheets database absensi yang sedang digunakan, kemudian menu
+   Extensions/Ekstensi > Apps Script. Jika proyeknya standalone, buka proyek
+   Apps Script yang memiliki deployment dengan URL /exec di web/config.js.
+2. Buat salinan isi Code.gs lama sebagai cadangan.
+3. Buka file backend/Code.gs dari ZIP menggunakan editor teks. Salin seluruh
+   isinya untuk mengganti Code.gs dalam proyek yang benar, lalu simpan.
+4. Pertahankan Script Properties seperti PHOTO_FOLDER_ID dan NORMAL_OUT.
+   Kode tetap memakai database utama serta koordinat gudang terbaru dari repo.
+5. Klik Deploy/Terapkan > Manage deployments/Kelola deployment.
+6. Pilih deployment Web App aktif yang dipakai aplikasi, klik ikon pensil/Edit.
+7. Pada Version/Versi pilih New version/Versi baru, lalu klik Deploy/Terapkan.
+   Perbarui deployment yang sama agar URL /exec tetap sama.
+8. Buka URL /exec tersebut dengan tambahan ?action=health. Respons harus
+   mencantumkan "ok":true, "version":"1.9.9", dan "writeStatus":true.
+9. Jika tidak ada respons JSON, periksa kembali proyek, URL deployment,
+   izin akun yang menjalankan deployment, dan akses Web App sesuai pengaturan lama.
+
+PENGUJIAN
+Perintah: node --test tests/attendance.test.cjs
+23 pengujian otomatis lulus menggunakan simulasi browser dan Apps Script:
+respons setelah 17 detik; timeout dan callback terlambat; retry koneksi;
+pengiriman ringan; tanpa sukses palsu; persistensi permintaan; klik ganda;
+kompatibilitas backend lama; konfirmasi per gudang; validasi identitas/GPS/tanggal;
+server sibuk; hasil saat cache gagal; pencarian riwayat 10.000 baris; tanggal WIB.
+GPS/kamera fisik, instalasi APK, dan checkout karyawan di database produksi
+belum diuji langsung. Pemeriksaan server produksi hanya membaca health.
+Kode backend di server baru berubah setelah langkah deployment di atas selesai.
+
+UJI SETELAH DIPASANG
+Gunakan karyawan yang memang sudah masuk hari ini di gudang yang sesuai.
+Tekan Absen Pulang satu kali. Tunggu sampai konfirmasi muncul dan cocokkan
+jam pulang di Sheets. Jika belum terkonfirmasi, tekan kembali setelah koneksi
+normal; catatan pulang yang sudah tersimpan tetap memakai waktu pertama.
+
+Dokumentasi pembaruan deployment:
+https://developers.google.com/apps-script/concepts/deployments

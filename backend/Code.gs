@@ -1,4 +1,4 @@
-const APP_VERSION = '1.9.4';
+const APP_VERSION = '1.9.9';
 const SHEET_NAME = 'Absensi';
 const DEFAULT_NORMAL_OUT = '17:30';
 const PRIMARY_SPREADSHEET_ID = '1yELZY2kInp3AiDx7jvQBpAlgWF238oGN-qfZlETS0YQ';
@@ -42,6 +42,7 @@ function doGet(e) {
         ok: true,
         service: 'Absensi Kamera GPS',
         version: APP_VERSION,
+        capabilities: {writeStatus:true},
         host: hostLabel_(),
         hosts: HOST_EMAILS,
         normalOut: getProp_('NORMAL_OUT', DEFAULT_NORMAL_OUT),
@@ -51,6 +52,8 @@ function doGet(e) {
       };
     } else if (action === 'today') {
       result = getToday_(p.employee, p.warehouse, p.date);
+    } else if (action === 'writeStatus') {
+      result = getWriteStatus_(p);
     } else if (action === 'weekSummary') {
       result = weekSummary_(p.employee, p.warehouse);
     } else {
@@ -67,19 +70,53 @@ function doGet(e) {
 
 function doPost(e) {
   const lock = LockService.getScriptLock();
+  let acquired = false;
+  let payload;
+  let result;
   try {
-    lock.waitLock(15000);
-    const payload = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    payload = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     if (!payload || !payload.type || !payload.record) throw new Error('Payload tidak valid');
+    acquired = lock.tryLock(10000);
+    if (!acquired) throw new Error('Server sedang sibuk. Tekan tombol absen lagi untuk mencoba kembali.');
     const sh = getSheet_();
-    if (payload.type === 'checkin') return output_(saveCheckin_(sh, payload.record), '');
-    if (payload.type === 'checkout') return output_(saveCheckout_(sh, payload.record), '');
-    throw new Error('Tipe tidak dikenal');
+    if (payload.type === 'checkin') result = saveCheckin_(sh, payload.record);
+    else if (payload.type === 'checkout') result = saveCheckout_(sh, payload.record);
+    else throw new Error('Tipe tidak dikenal');
+    SpreadsheetApp.flush();
   } catch (err) {
-    return output_({ok:false,error:String(err && err.message || err)}, '');
+    result = {ok:false,error:String(err && err.message || err)};
   } finally {
-    try { lock.releaseLock(); } catch (_) {}
+    if (acquired) {try { lock.releaseLock(); } catch (_) {}}
   }
+  cacheWriteResult_(payload,result);
+  return output_(result,'');
+}
+
+function writeResultKey_(requestId) {
+  const id = String(requestId || '');
+  return /^[A-Za-z0-9_-]{1,120}$/.test(id) ? 'absensi.write.'+id : '';
+}
+
+function cacheWriteResult_(payload,result) {
+  const key = writeResultKey_(payload && payload.requestId);
+  if (!key) return;
+  // Confirmation is optional: a cache outage must not invalidate a completed write.
+  try {
+    const r = payload.record;
+    CacheService.getScriptCache().put(key,JSON.stringify({employee:cleanName_(r.employee).toLowerCase(),warehouse:normalizeWarehouse_(r.warehouse),result:result}),600);
+  } catch (_) {}
+}
+
+function getWriteStatus_(p) {
+  const key = writeResultKey_(p.requestId);
+  const name = cleanName_(p.employee).toLowerCase();
+  const wh = normalizeWarehouse_(p.warehouse);
+  if (!key || !name || !wh) throw new Error('Identitas permintaan tidak valid');
+  let entry;
+  try {entry = JSON.parse(CacheService.getScriptCache().get(key) || 'null');} catch (_) {}
+  if (!entry) return {ok:true,pending:true};
+  if (entry.employee !== name || entry.warehouse !== wh) throw new Error('Identitas konfirmasi tidak cocok');
+  return {ok:true,pending:false,result:entry.result};
 }
 
 function saveCheckin_(sh, r) {
@@ -242,41 +279,29 @@ function findRowById_(sh,id) {
   const last = sh.getLastRow();
   if (last < 2) return 0;
 
-  const ids = sh.getRange(2,1,last-1,1).getDisplayValues();
-  for (let i=0;i<ids.length;i++) {
-    if (String(ids[i][0]) === id) return i+2;
-  }
-  return 0;
+  const match = sh.getRange(2,1,last-1,1).createTextFinder(id).matchEntireCell(true).matchCase(true).useRegularExpression(false).findNext();
+  return match ? match.getRow() : 0;
 }
 
 function findRowByEmployeeDate_(sh,employee,date) {
-  const last = sh.getLastRow();
-  if (last < 2) return 0;
-
-  const rows = sh.getRange(2,2,last-1,3).getValues();
-  const n = cleanName_(employee).toLowerCase();
-
-  for (let i=0;i<rows.length;i++) {
-    if (
-      cleanName_(rows[i][0]).toLowerCase() === n &&
-      dateKey_(rows[i][2]) === String(date)
-    ) return i+2;
-  }
-  return 0;
+  return findRecentEmployeeRow_(sh,employee,date,'');
 }
 
 function findRowByEmployeeDateWarehouse_(sh,employee,date,warehouse) {
-  const last = sh.getLastRow();
-  if (last < 2) return 0;
-  const rows = sh.getRange(2,2,last-1,21).getValues();
+  return findRecentEmployeeRow_(sh,employee,date,warehouse);
+}
+
+function findRecentEmployeeRow_(sh,employee,date,warehouse) {
   const n = cleanName_(employee).toLowerCase();
-  const w = String(warehouse).trim().toUpperCase();
-  for (let i=0;i<rows.length;i++) {
-    if (
-      cleanName_(rows[i][0]).toLowerCase() === n &&
-      dateKey_(rows[i][2]) === String(date) &&
-      String(rows[i][20] || '').trim().toUpperCase() === w
-    ) return i+2;
+  const w = String(warehouse || '').trim().toUpperCase();
+  // Most current-day rows are at the bottom. Stop without exporting the entire history.
+  for (let end=sh.getLastRow();end>=2;) {
+    const start = Math.max(2,end-249);
+    const rows = sh.getRange(start,2,end-start+1,w ? 21 : 3).getValues();
+    for (let i=rows.length-1;i>=0;i--) {
+      if (cleanName_(rows[i][0]).toLowerCase() === n && dateKey_(rows[i][2]) === String(date) && (!w || String(rows[i][20] || '').trim().toUpperCase() === w)) return start+i;
+    }
+    end = start-1;
   }
   return 0;
 }
@@ -435,4 +460,3 @@ function output_(obj, callback) {
     .createTextOutput(json)
     .setMimeType(ContentService.MimeType.JSON);
 }
-

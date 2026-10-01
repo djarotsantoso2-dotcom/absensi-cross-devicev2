@@ -8,8 +8,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Absensi Kamera GPS</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="apple-touch-icon" href="icon-192.png?v=1.9.7">
-  <link rel="icon" href="icon-192.png?v=1.9.7" type="image/png">
+  <link rel="apple-touch-icon" href="icon-192.png?v=1.9.9">
+  <link rel="icon" href="icon-192.png?v=1.9.9" type="image/png">
   <style>
     :root{
       --ink:#172033;
@@ -282,6 +282,7 @@
         <h2>Absensi Hari Ini</h2>
         <button class="btn success" id="checkIn">ABSEN MASUK</button>
         <button class="btn danger" id="checkOut">ABSEN PULANG</button>
+        <p id="attendanceState" class="muted" role="status" aria-live="polite"></p>
         <div class="notice">
           Jam masuk aktual selalu memakai waktu server. Jadwal: Admin 08:00, Packing 09:00, Gudang 09:00.
           Saat pulang, GPS diminta kembali. Lembur hanya dihitung setelah jam pulang normal dan tidak dihitung bila baru masuk setelah jam pulang normal.
@@ -313,6 +314,7 @@ const keyEmployee = 'absensi.employee';
 const keyDivision = 'absensi.division';
 const keyWarehouse = 'absensi.warehouse';
 const keySettings = 'absensi.settings.v2';
+const keyPendingCheckout = 'absensi.pendingCheckout.v1';
 const migrationKey = 'absensi.migrated.v1.9';
 
 const SCHEDULES = Object.freeze({
@@ -338,6 +340,8 @@ let photoData = '';
 let gps = null;
 let syncBusy = false;
 let attendanceBusy = false;
+let attendanceRevision = 0;
+const todayRequests = new Map();
 
 if(!localStorage.getItem(migrationKey)){
   localStorage.removeItem('absensi.records.v2');
@@ -363,6 +367,33 @@ function delay(ms){ return new Promise(resolve=>setTimeout(resolve,ms)); }
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function employeeKey(value){return String(value||'').replace(/\s+/g,' ').trim().slice(0,80).toLowerCase();}
 function localToday(){ const n=employee(), day=localDate(), w=warehouse(); return records().find(r=>employeeKey(r.employee)===employeeKey(n)&&r.date===day&&String(r.warehouse||'').toUpperCase()===w); }
+
+function sameAttendance(a,b){
+  return employeeKey(a.employee)===employeeKey(b.employee)&&a.date===b.date&&String(a.warehouse||'').toUpperCase()===String(b.warehouse||'').toUpperCase();
+}
+function pendingCheckouts(){
+  try{const rows=JSON.parse(localStorage.getItem(keyPendingCheckout)||'[]');return Array.isArray(rows)?rows.filter(x=>x&&x.payload&&x.payload.record):[];}catch(_){return [];}
+}
+function pendingCheckout(){
+  const identity={employee:employee(),warehouse:warehouse(),date:localDate()};
+  return pendingCheckouts().find(x=>sameAttendance(x.payload.record,identity)&&x.endpoint===endpoint());
+}
+function queueCheckout(r,point){
+  const previous=pendingCheckout();
+  const item={endpoint:endpoint(),payload:{type:'checkout',requestId:previous?.payload.requestId||('out_'+Date.now()+'_'+Math.random().toString(36).slice(2)),record:{id:r.id,employee:r.employee,warehouse:r.warehouse,date:r.date,outGps:{...point}}}};
+  const rows=pendingCheckouts().filter(x=>!(x.endpoint===item.endpoint&&sameAttendance(x.payload.record,r)));
+  rows.push(item);
+  localStorage.setItem(keyPendingCheckout,JSON.stringify(rows.slice(-20)));
+  return item;
+}
+function clearPendingCheckout(r){
+  const rows=pendingCheckouts().filter(x=>!(x.endpoint===endpoint()&&sameAttendance(x.payload.record,r)));
+  localStorage.setItem(keyPendingCheckout,JSON.stringify(rows));
+}
+function attendanceStatus(message,state=''){
+  $('attendanceState').textContent=message;
+  $('attendanceState').className='muted'+(state?' sync-'+state:'');
+}
 
 function tick(){
   const d=new Date();
@@ -443,6 +474,7 @@ function updateToday(){
   const r=localToday(), p=$('todayStatus');
   if(!employee()){p.textContent='Isi nama';p.className='pill';}
   else if(r&&(r.out||r.outLocal)){p.textContent='Sudah pulang';p.className='pill ok';}
+  else if(pendingCheckout()){p.textContent='Pulang belum terkonfirmasi';p.className='pill warn';}
   else if(r){p.textContent='Sudah masuk';p.className='pill ok';}
   else{p.textContent='Belum absen';p.className='pill warn';}
   updateScheduleUi();
@@ -593,7 +625,9 @@ function validateWarehouseGeofence(point){
   return dist;
 }
 
-function jsonp(params, timeoutMs=12000){
+function connectionError(message){const err=new Error(message);err.retryable=true;return err;}
+
+function jsonp(params, timeoutMs=45000){
   return new Promise((resolve,reject)=>{
     const ep=endpoint();
     if(!ep) return reject(new Error('URL server belum diisi.'));
@@ -602,29 +636,49 @@ function jsonp(params, timeoutMs=12000){
     const url=new URL(ep);
     Object.entries(params||{}).forEach(([k,v])=>url.searchParams.set(k,String(v)));
     url.searchParams.set('callback',cb);
+    url.searchParams.set('_',String(Date.now()));
 
     const script=document.createElement('script');
-    const timer=setTimeout(()=>cleanup(new Error('Server timeout.')),timeoutMs);
+    let settled=false;
+    const timer=setTimeout(()=>cleanup(connectionError('Server belum merespons. Periksa koneksi lalu coba kembali.')),timeoutMs);
 
     function cleanup(err,data){
+      if(settled) return;
+      settled=true;
       clearTimeout(timer);
-      delete window[cb];
+      // A delayed JSONP response must not call a deleted callback after timeout.
+      if(err){window[cb]=()=>{};setTimeout(()=>delete window[cb],60000);}
+      else delete window[cb];
+      script.onerror=null;
+      script.onload=null;
       script.remove();
       err?reject(err):resolve(data);
     }
 
     window[cb]=data=>cleanup(null,data);
-    script.onerror=()=>cleanup(new Error('Gagal membaca server.'));
+    script.onerror=()=>cleanup(connectionError('Koneksi ke server terputus.'));
+    script.onload=()=>{if(!settled) cleanup(connectionError('Server tidak mengirim respons absensi. Periksa URL dan akses server.'));};
     script.src=url.toString();
     document.head.appendChild(script);
   });
 }
 
-async function serverToday(){
+async function serverToday({attempts=2}={}){
   if(!endpoint()||!employee()||!warehouse()) return null;
-  const data=await jsonp({action:'today',employee:employee(),warehouse:warehouse(),date:localDate()});
-  if(!data?.ok) throw new Error(data?.error||'Status server gagal.');
-  return data.record||null;
+  const params={action:'today',employee:employee(),warehouse:warehouse(),date:localDate()};
+  const key=JSON.stringify([endpoint(),params,attempts]);
+  if(todayRequests.has(key)) return todayRequests.get(key);
+  const request=(async()=>{
+    for(let i=0;i<attempts;i++){
+      try{
+        const data=await jsonp(params);
+        if(!data?.ok) throw new Error(data?.error||'Status server gagal.');
+        return data.record||null;
+      }catch(err){if(!err.retryable||i===attempts-1) throw err;await delay(1500);}
+    }
+  })();
+  todayRequests.set(key,request);
+  try{return await request;}finally{todayRequests.delete(key);}
 }
 
 function mergeServerToday(r){
@@ -654,14 +708,21 @@ function mergeServerToday(r){
   else items.unshift(merged);
 
   saveRecords(items);
+  if(r.out||r.outLocal){
+    const pending=pendingCheckout();
+    clearPendingCheckout(r);
+    if(pending&&sameAttendance(pending.payload.record,r)) attendanceStatus('Absen pulang terkonfirmasi di server.','ok');
+  }
   render();
 }
 
 async function hydrateTodayFromServer(silent=true){
   if(attendanceBusy||syncBusy||!endpoint()||!employee()||!warehouse()) return null;
   syncBusy=true;
+  const revision=attendanceRevision;
   try{
     const r=await serverToday();
+    if(revision!==attendanceRevision) return null;
     if(r) mergeServerToday(r);
     $('serverBadge').textContent='Server online';
     $('serverBadge').className='pill ok';
@@ -679,12 +740,16 @@ async function hydrateTodayFromServer(silent=true){
 async function sendWrite(payload){
   const ep=endpoint();
   if(!ep) throw new Error('URL server belum dikonfigurasi.');
-  await fetch(ep,{
-    method:'POST',
-    mode:'no-cors',
-    headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body:JSON.stringify(payload)
-  });
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),45000);
+  try{
+    await fetch(ep,{
+      method:'POST',mode:'no-cors',signal:controller.signal,
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body:JSON.stringify(payload)
+    });
+  }catch(err){throw connectionError(err.name==='AbortError'?'Pengiriman belum terkonfirmasi; sedang memeriksa server.':'Pengiriman terputus; sedang memeriksa server.');}
+  finally{clearTimeout(timer);}
 }
 
 async function verifyToday(attempts=5, requireCheckout=false){
@@ -692,11 +757,30 @@ async function verifyToday(attempts=5, requireCheckout=false){
   for(let i=0;i<attempts;i++){
     await delay(i===0?700:1000);
     try{
-      last=await serverToday();
+      last=await serverToday({attempts:1});
       if(last&&(!requireCheckout||last.out||last.outLocal)) return last;
     }catch(_){}
   }
   return null;
+}
+
+async function verifyCheckout(item){
+  const r=item.payload.record;
+  for(let i=0;i<3;i++){
+    await delay(i===0?700:1500);
+    try{
+      const data=await jsonp({action:'writeStatus',requestId:item.payload.requestId,employee:r.employee,warehouse:r.warehouse});
+      // Old backends do not implement writeStatus. Verify against today's row instead.
+      if(!data?.ok) break;
+      if(data.pending) continue;
+      const result=data.result;
+      if(!result?.ok) throw new Error(result?.error||'Server menolak absen pulang.');
+      if(result.record&&sameAttendance(result.record,r)&&(result.record.out||result.record.outLocal)) return result.record;
+      throw new Error('Konfirmasi server tidak cocok dengan permintaan absen pulang.');
+    }catch(err){if(!err.retryable) throw err;}
+  }
+  const result=await verifyToday(2,true);
+  return result&&sameAttendance(result,r)?result:null;
 }
 
 function resetCapture(){
@@ -784,19 +868,21 @@ async function performCheckIn(){
 async function performCheckOut(){
   const name=employee();
   if(!name) return alert('Isi nama karyawan terlebih dahulu.');
-
-  let r=localToday();
-  if(endpoint()){
-    const sr=await serverToday();
-    if(sr){mergeServerToday(sr);r=localToday();}
-    else r=null;
-  }
-
-  if(!r) return alert('Belum ada absen masuk hari ini.');
-  if(r.out||r.outLocal) return alert('Absen pulang sudah tersimpan.');
+  if(!warehouse()) return alert('Pilih gudang terlebih dahulu.');
 
   try{
     $('checkOut').disabled=true;
+    let r=localToday()||pendingCheckout()?.payload.record;
+    // The backend validates the row. A known check-in does not need a blocking GET first.
+    if(endpoint()&&(!r||((r.out||r.outLocal)&&r.source!=='server'))){
+      attendanceStatus('Memeriksa absen masuk di server. Mohon tunggu...');
+      const sr=await serverToday();
+      if(sr){mergeServerToday(sr);r=localToday();}else r=null;
+    }
+    if(!r){attendanceStatus('Absen masuk hari ini belum ditemukan.','bad');return alert('Belum ada absen masuk hari ini.');}
+    if(r.out||r.outLocal){attendanceStatus('Absen pulang sudah terkonfirmasi.','ok');return alert('Absen pulang sudah tersimpan.');}
+
+    attendanceStatus('Mengambil lokasi untuk absen pulang...');
     gps=null;
     await getGps({
       timeoutMs:45000,
@@ -805,29 +891,34 @@ async function performCheckOut(){
       allowRecent:true
     });
 
-    const now=new Date();
-    r.out=now.toISOString();
-    r.outLocal=now.toLocaleTimeString('id-ID',{hour12:false,timeZone:'Asia/Jakarta'});
-    r.outGps={...gps};
-
     if(endpoint()){
-      await sendWrite({type:'checkout',record:r});
-      const verified=await verifyToday(5,true);
-      if(!verified) throw new Error('Server belum mengonfirmasi absen pulang. Tekan Absen Pulang lagi untuk memeriksa dan mencoba ulang.');
+      const item=queueCheckout(r,gps);
+      render();
+      attendanceStatus('Mengirim absen pulang. Mohon tunggu...');
+      try{await sendWrite(item.payload);}catch(err){if(!err.retryable) throw err;}
+      attendanceStatus('Memeriksa hasil penyimpanan di server. Mohon tunggu...');
+      const verified=await verifyCheckout(item);
+      if(!verified) throw new Error('Permintaan pulang tersimpan di perangkat, tetapi belum terkonfirmasi di server. Tekan Absen Pulang lagi untuk mencoba kembali.');
       mergeServerToday(verified);
+      attendanceStatus('Absen pulang terkonfirmasi di server.','ok');
       alert('Absen pulang terverifikasi. Lembur = '+Number(verified.overtime||0).toFixed(2)+' jam.');
     }else{
+      const now=new Date();
+      r={...r,out:now.toISOString(),outLocal:now.toLocaleTimeString('id-ID',{hour12:false,timeZone:'Asia/Jakarta'}),outGps:{...gps}};
       const items=records();
       const i=items.findIndex(x=>String(x.id)===String(r.id));
       if(i>=0) items[i]=r;
       saveRecords(items);
+      attendanceStatus('Absen pulang tersimpan lokal.','ok');
       alert('Absen pulang tersimpan lokal.');
     }
 
     gps=null;
     render();
   }catch(err){
-    alert('Absen pulang gagal: '+err.message);
+    attendanceStatus(err.message,'bad');
+    render();
+    alert('Absen pulang belum selesai: '+err.message);
   }finally{
     $('checkOut').disabled=false;
   }
@@ -836,6 +927,7 @@ async function performCheckOut(){
 async function runAttendance(action){
   if(attendanceBusy) return;
   attendanceBusy=true;
+  attendanceRevision++;
   const controls=[...document.querySelectorAll('button,input,select,textarea')];
   const previous=controls.map(el=>el.disabled);
   controls.forEach(el=>el.disabled=true);
@@ -874,7 +966,8 @@ function renderHistory(){
 
 function render(){
   renderHistory();
-  $('version').textContent=CFG.APP_VERSION||'1.9.7';
+  $('version').textContent=CFG.APP_VERSION||'1.9.9';
+  if(!attendanceBusy&&pendingCheckout()) attendanceStatus('Ada permintaan pulang yang belum terkonfirmasi. Tekan Absen Pulang untuk mencoba kembali.');
   updateToday();
 }
 

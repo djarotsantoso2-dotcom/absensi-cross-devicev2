@@ -1,3 +1,14 @@
-plugins {
-    id 'com.android.application' version '8.7.3' apply false
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.teymor.absensi'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.teymor.absensi'
+        minSdk 24
+        targetSdk 35
+        versionCode 199
+        versionName '1.9.9'
+    }
 }

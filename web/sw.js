@@ -1,5 +1,5 @@
-const CACHE = 'absensi-gps-nanas-location-fix-20260930';
-const ASSETS = ['./', './index.html', './config.js', './manifest.webmanifest', './cs-store-flow-logo.png', './icon-192.png', './icon-512.png', './icon-192.png?v=1.9.7', './icon-512.png?v=1.9.7'];
+const CACHE = 'absensi-gps-v1.9.9-checkout-timeout';
+const ASSETS = ['./', './index.html', './config.js', './manifest.webmanifest', './cs-store-flow-logo.png', './icon-192.png', './icon-512.png', './icon-192.png?v=1.9.9', './icon-512.png?v=1.9.9'];
 const assetUrls = new Set(ASSETS.map(path => new URL(path, self.registration.scope).href));
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
