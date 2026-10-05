@@ -27,7 +27,7 @@ const WAREHOUSES = Object.freeze({
 
 const HEADERS = [
   'ID','Karyawan','Divisi','Tanggal','Jam Masuk','Jadwal Masuk','Telat Menit',
-  'Lat Masuk','Lon Masuk','Akurasi Masuk','Foto','Pekerjaan',
+  'Lat Masuk','Lon Masuk','Akurasi Masuk','Foto',
   'Jam Pulang','Lat Pulang','Lon Pulang','Akurasi Pulang','Lembur Jam',
   'Host','Status','Dibuat','Diubah','Gudang','Jobdesk Pulang'
 ];
@@ -143,7 +143,7 @@ function saveCheckin_(sh, r) {
   sh.appendRow([
     id, employee, division, date, inLocal, scheduledStart, lateMinutes,
     val_(r.inGps,'lat'), val_(r.inGps,'lon'), val_(r.inGps,'accuracy'), photoUrl,
-    String(r.work || '').trim(), '', '', '', '', 0,
+    '', '', '', '', 0,
     hostLabel_(), 'MASUK', serverNow, serverNow, warehouse, ''
   ]);
 
@@ -176,15 +176,15 @@ function saveCheckout_(sh, r) {
   const normalOut = getProp_('NORMAL_OUT', DEFAULT_NORMAL_OUT);
   const overtime = overtimeHours_(existing.inLocal, outLocal, normalOut);
 
-  sh.getRange(row,13,1,9).setValues([[
+  sh.getRange(row,12,1,9).setValues([[
     outLocal,
     val_(r.outGps,'lat'), val_(r.outGps,'lon'), val_(r.outGps,'accuracy'),
     overtime,
     hostLabel_(), 'PULANG',
-    sh.getRange(row,20).getValue() || serverNow,
+    sh.getRange(row,19).getValue() || serverNow,
     serverNow
   ]]);
-  sh.getRange(row,23).setValue(checkoutWork);
+  sh.getRange(row,22).setValue(checkoutWork);
 
   return {ok:true,row:row,record:publicRecord_(sh,row)};
 }
@@ -223,12 +223,12 @@ function weekSummary_(employee, warehouse) {
 
   values.forEach(row => {
     if (String(row[1]).trim().toLowerCase() !== name.toLowerCase()) return;
-    if (String(row[21] || '').trim().toUpperCase() !== wh) return;
+    if (String(row[20] || '').trim().toUpperCase() !== wh) return;
     const d = String(row[3]);
     if (d < start) return;
     dates[d] = true;
     late += Number(row[6]) || 0;
-    ot += Number(row[16]) || 0;
+    ot += Number(row[15]) || 0;
   });
 
   return {
@@ -251,29 +251,31 @@ function getSheet_() {
 
 function ensureHeader_(sh) {
   const last = sh.getLastRow();
-  const legacyHeaders = HEADERS.slice(0,21);
 
   if (last === 0) {
     sh.getRange(1,1,1,HEADERS.length).setValues([HEADERS]);
     return;
   }
 
-  const legacyCurrent = sh.getRange(1,1,1,legacyHeaders.length).getDisplayValues()[0];
-  const legacySame = legacyHeaders.every((h,i) => String(legacyCurrent[i] || '') === h);
-  const currentWarehouseHeader = String(sh.getRange(1,22).getDisplayValue() || '');
-  const currentCheckoutWorkHeader = String(sh.getRange(1,23).getDisplayValue() || '');
+  const oldHeaders = [
+    'ID','Karyawan','Divisi','Tanggal','Jam Masuk','Jadwal Masuk','Telat Menit',
+    'Lat Masuk','Lon Masuk','Akurasi Masuk','Foto','Pekerjaan',
+    'Jam Pulang','Lat Pulang','Lon Pulang','Akurasi Pulang','Lembur Jam',
+    'Host','Status','Dibuat','Diubah','Gudang','Jobdesk Pulang'
+  ];
+  const currentOld = sh.getRange(1,1,1,oldHeaders.length).getDisplayValues()[0];
+  const old23Same = oldHeaders.every((h,i) => String(currentOld[i] || '') === h);
+  const old22Same = oldHeaders.slice(0,22).every((h,i) => String(currentOld[i] || '') === h);
 
-  if (legacySame && currentWarehouseHeader === 'Gudang' && currentCheckoutWorkHeader === 'Jobdesk Pulang') return;
-
-  if (legacySame && currentWarehouseHeader === 'Gudang' && !currentCheckoutWorkHeader) {
-    sh.getRange(1,23).setValue('Jobdesk Pulang');
+  if (old23Same || old22Same) {
+    sh.deleteColumn(12);
+    sh.getRange(1,1,1,HEADERS.length).setValues([HEADERS]);
     return;
   }
 
-  if (legacySame && !currentWarehouseHeader) {
-    sh.getRange(1,22,1,2).setValues([['Gudang','Jobdesk Pulang']]);
-    return;
-  }
+  const current = sh.getRange(1,1,1,HEADERS.length).getDisplayValues()[0];
+  const same = HEADERS.every((h,i) => String(current[i] || '') === h);
+  if (same) return;
 
   if (last <= 1) {
     sh.getRange(1,1,1,Math.max(sh.getLastColumn(),HEADERS.length)).clearContent();
@@ -307,9 +309,9 @@ function findRecentEmployeeRow_(sh,employee,date,warehouse) {
   // Most current-day rows are at the bottom. Stop without exporting the entire history.
   for (let end=sh.getLastRow();end>=2;) {
     const start = Math.max(2,end-249);
-    const rows = sh.getRange(start,2,end-start+1,w ? 21 : 3).getValues();
+    const rows = sh.getRange(start,2,end-start+1,w ? 20 : 3).getValues();
     for (let i=rows.length-1;i>=0;i--) {
-      if (cleanName_(rows[i][0]).toLowerCase() === n && dateKey_(rows[i][2]) === String(date) && (!w || String(rows[i][20] || '').trim().toUpperCase() === w)) return start+i;
+      if (cleanName_(rows[i][0]).toLowerCase() === n && dateKey_(rows[i][2]) === String(date) && (!w || String(rows[i][19] || '').trim().toUpperCase() === w)) return start+i;
     }
     end = start-1;
   }
@@ -321,17 +323,16 @@ function publicRecord_(sh,row) {
   return {
     id:String(v[0]||''),
     employee:String(v[1]||''),
-    warehouse:String(v[21]||''),
+    warehouse:String(v[20]||''),
     division:String(v[2]||''),
     date:dateKey_(v[3]),
     inLocal:v[4] instanceof Date ? format_(v[4], 'HH:mm:ss') : String(v[4]||''),
     scheduledStart:String(v[5]||''),
     lateMinutes:Number(v[6])||0,
-    work:String(v[11]||''),
-    outLocal:v[12] instanceof Date ? format_(v[12], 'HH:mm:ss') : String(v[12]||''),
-    overtime:Number(v[16])||0,
-    status:String(v[18]||''),
-    checkoutWork:String(v[22]||'')
+    outLocal:v[11] instanceof Date ? format_(v[11], 'HH:mm:ss') : String(v[11]||''),
+    overtime:Number(v[15])||0,
+    status:String(v[17]||''),
+    checkoutWork:String(v[21]||'')
   };
 }
 

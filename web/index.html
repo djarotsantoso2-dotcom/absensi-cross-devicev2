@@ -272,10 +272,6 @@
 
       <div class="card">
         <h2>Detail Pekerjaan</h2>
-        <div class="field">
-          <label>Kerjaan hari ini</label>
-          <textarea id="work" placeholder="Tuliskan pekerjaan yang dilakukan hari ini..." required></textarea>
-        </div>
         <div class="field" style="margin-top:12px">
           <label>Jobdesk Pulang</label>
           <textarea id="outWork" placeholder="Tuliskan pekerjaan yang diselesaikan / serah terima sebelum pulang..." required></textarea>
@@ -710,7 +706,6 @@ function mergeServerToday(r){
     out:(r.out||r.outLocal)?(r.out||existing.out||null):null,
     outLocal:r.outLocal||null,
     overtime:Number(r.overtime)||0,
-    work:r.work||existing.work||'',
     checkoutWork:r.checkoutWork||r.outWork||existing.checkoutWork||existing.outWork||'',
     source:'server'
   });
@@ -815,9 +810,6 @@ async function performCheckIn(){
   if(!name) return alert('Isi dan simpan nama karyawan terlebih dahulu.');
   if(!div) return alert('Pilih divisi Admin, Packing, atau Gudang terlebih dahulu.');
 
-  const work=$('work').value.trim();
-  if(!work) return alert('Detail pekerjaan wajib diisi.');
-
   if(endpoint()){
     const existing=await serverToday();
     if(existing){mergeServerToday(existing);return alert((existing.out||existing.outLocal)?'Hari ini sudah absen dan sudah pulang.':'Hari ini sudah absen masuk.');}
@@ -842,7 +834,6 @@ async function performCheckIn(){
       lateMinutes:0,
       inGps:{...gps},
       inPhoto:photoData,
-      work,
       out:null,
       outGps:null,
       overtime:0
@@ -865,7 +856,6 @@ async function performCheckIn(){
       $('syncState').textContent='Tersimpan lokal. Isi URL server agar sinkron lintas device.';
     }
 
-    $('work').value='';
     resetCapture();
     render();
     alert('Absen masuk berhasil disimpan'+(endpoint()?' dan dikirim ke server.':'.'));
@@ -975,7 +965,6 @@ function renderHistory(){
       ' | Pulang: '+escapeHtml(r.outLocal||'-')+
       ' | Telat: '+late+' m'+
       ' | Lembur: '+Number(r.overtime||0).toFixed(2)+' jam</div>'+
-      '<div style="margin-top:5px"><b>Jobdesk masuk:</b> '+escapeHtml(r.work||'Tidak ada detail pekerjaan')+'</div>'+
       '<div style="margin-top:5px"><b>Jobdesk pulang:</b> '+escapeHtml(r.checkoutWork||r.outWork||'-')+'</div>'+
       '</div>';
   }).join('');
