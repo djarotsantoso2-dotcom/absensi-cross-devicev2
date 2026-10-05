@@ -29,7 +29,7 @@ const HEADERS = [
   'ID','Karyawan','Divisi','Tanggal','Jam Masuk','Jadwal Masuk','Telat Menit',
   'Lat Masuk','Lon Masuk','Akurasi Masuk','Foto','Pekerjaan',
   'Jam Pulang','Lat Pulang','Lon Pulang','Akurasi Pulang','Lembur Jam',
-  'Host','Status','Dibuat','Diubah','Gudang'
+  'Host','Status','Dibuat','Diubah','Gudang','Jobdesk Pulang'
 ];
 
 function doGet(e) {
@@ -42,7 +42,7 @@ function doGet(e) {
         ok: true,
         service: 'Absensi Kamera GPS',
         version: APP_VERSION,
-        capabilities: {writeStatus:true},
+        capabilities: {writeStatus:true,checkoutWork:true},
         host: hostLabel_(),
         hosts: HOST_EMAILS,
         normalOut: getProp_('NORMAL_OUT', DEFAULT_NORMAL_OUT),
@@ -144,7 +144,7 @@ function saveCheckin_(sh, r) {
     id, employee, division, date, inLocal, scheduledStart, lateMinutes,
     val_(r.inGps,'lat'), val_(r.inGps,'lon'), val_(r.inGps,'accuracy'), photoUrl,
     String(r.work || '').trim(), '', '', '', '', 0,
-    hostLabel_(), 'MASUK', serverNow, serverNow, warehouse
+    hostLabel_(), 'MASUK', serverNow, serverNow, warehouse, ''
   ]);
 
   return {ok:true,row:sh.getLastRow(),record:publicRecord_(sh, sh.getLastRow())};
@@ -169,6 +169,9 @@ function saveCheckout_(sh, r) {
   }
   if (existing.outLocal) return {ok:true,duplicate:true,record:existing};
 
+  const checkoutWork = String(r.outWork || r.checkoutWork || '').trim().slice(0,1000);
+  if (!checkoutWork) throw new Error('Jobdesk Pulang wajib diisi');
+
   const outLocal = format_(serverNow, 'HH:mm:ss');
   const normalOut = getProp_('NORMAL_OUT', DEFAULT_NORMAL_OUT);
   const overtime = overtimeHours_(existing.inLocal, outLocal, normalOut);
@@ -181,6 +184,7 @@ function saveCheckout_(sh, r) {
     sh.getRange(row,20).getValue() || serverNow,
     serverNow
   ]]);
+  sh.getRange(row,23).setValue(checkoutWork);
 
   return {ok:true,row:row,record:publicRecord_(sh,row)};
 }
@@ -257,11 +261,17 @@ function ensureHeader_(sh) {
   const legacyCurrent = sh.getRange(1,1,1,legacyHeaders.length).getDisplayValues()[0];
   const legacySame = legacyHeaders.every((h,i) => String(legacyCurrent[i] || '') === h);
   const currentWarehouseHeader = String(sh.getRange(1,22).getDisplayValue() || '');
+  const currentCheckoutWorkHeader = String(sh.getRange(1,23).getDisplayValue() || '');
 
-  if (legacySame && currentWarehouseHeader === 'Gudang') return;
+  if (legacySame && currentWarehouseHeader === 'Gudang' && currentCheckoutWorkHeader === 'Jobdesk Pulang') return;
+
+  if (legacySame && currentWarehouseHeader === 'Gudang' && !currentCheckoutWorkHeader) {
+    sh.getRange(1,23).setValue('Jobdesk Pulang');
+    return;
+  }
 
   if (legacySame && !currentWarehouseHeader) {
-    sh.getRange(1,22).setValue('Gudang');
+    sh.getRange(1,22,1,2).setValues([['Gudang','Jobdesk Pulang']]);
     return;
   }
 
@@ -320,7 +330,8 @@ function publicRecord_(sh,row) {
     work:String(v[11]||''),
     outLocal:v[12] instanceof Date ? format_(v[12], 'HH:mm:ss') : String(v[12]||''),
     overtime:Number(v[16])||0,
-    status:String(v[18]||'')
+    status:String(v[18]||''),
+    checkoutWork:String(v[22]||'')
   };
 }
 
