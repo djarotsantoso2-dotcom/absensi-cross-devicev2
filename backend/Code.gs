@@ -19,10 +19,10 @@ const DIVISION_STARTS = Object.freeze({
 });
 
 const WAREHOUSES = Object.freeze({
-  KEBANDUNGAN: Object.freeze({name:'Kebandungan', lat:-6.633483, lon:106.775966, radiusM:10}),
+  KEBANDUNGAN: Object.freeze({name:'Kebandungan', lat:-6.633483, lon:106.775966, radiusM:50}),
   PARAKAN: Object.freeze({name:'Parakan', lat:-6.622239, lon:106.771941, radiusM:10}),
   CM: Object.freeze({name:'CM', lat:-6.6265, lon:106.7791667, radiusM:10}),
-  NANAS: Object.freeze({name:'Nanas', lat:-6.618490474658237, lon:106.78478377021241, radiusM:10})
+  NANAS: Object.freeze({name:'Nanas', lat:-6.618490474658237, lon:106.78478377021241, radiusM:50})
 });
 
 const HEADERS = [
