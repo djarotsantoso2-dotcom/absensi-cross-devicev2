@@ -367,7 +367,7 @@ function money(n){ return 'Rp'+Math.round(Number(n)||0).toLocaleString('id-ID');
 function delay(ms){ return new Promise(resolve=>setTimeout(resolve,ms)); }
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function employeeKey(value){return String(value||'').replace(/\s+/g,' ').trim().slice(0,80).toLowerCase();}
-function localToday(){ const n=employee(), day=localDate(), w=warehouse(); return records().find(r=>employeeKey(r.employee)===employeeKey(n)&&r.date===day&&String(r.warehouse||'').toUpperCase()===w); }
+function localToday(){ const n=employee(), day=localDate(), w=warehouse(); const rows=records().filter(r=>employeeKey(r.employee)===employeeKey(n)&&r.date===day); return rows.find(r=>String(r.warehouse||'').toUpperCase()===w)||rows[0]||null; }
 
 function sameAttendance(a,b){
   return employeeKey(a.employee)===employeeKey(b.employee)&&a.date===b.date&&String(a.warehouse||'').toUpperCase()===String(b.warehouse||'').toUpperCase();
@@ -376,12 +376,12 @@ function pendingCheckouts(){
   try{const rows=JSON.parse(localStorage.getItem(keyPendingCheckout)||'[]');return Array.isArray(rows)?rows.filter(x=>x&&x.payload&&x.payload.record):[];}catch(_){return [];}
 }
 function pendingCheckout(){
-  const identity={employee:employee(),warehouse:warehouse(),date:localDate()};
-  return pendingCheckouts().find(x=>sameAttendance(x.payload.record,identity)&&x.endpoint===endpoint());
+  const identity={employee:employee(),date:localDate()};
+  return pendingCheckouts().find(x=>employeeKey(x.payload.record.employee)===employeeKey(identity.employee)&&x.payload.record.date===identity.date&&x.endpoint===endpoint());
 }
 function queueCheckout(r,point,outWork){
   const previous=pendingCheckout();
-  const item={endpoint:endpoint(),payload:{type:'checkout',requestId:previous?.payload.requestId||('out_'+Date.now()+'_'+Math.random().toString(36).slice(2)),record:{id:r.id,employee:r.employee,warehouse:r.warehouse,date:r.date,outGps:{...point},outWork:String(outWork||'').trim()}}};
+  const item={endpoint:endpoint(),payload:{type:'checkout',requestId:previous?.payload.requestId||('out_'+Date.now()+'_'+Math.random().toString(36).slice(2)),record:{id:r.id,employee:r.employee,warehouse:r.warehouse,checkoutWarehouse:warehouse(),date:r.date,outGps:{...point},outWork:String(outWork||'').trim()}}};
   const rows=pendingCheckouts().filter(x=>!(x.endpoint===item.endpoint&&sameAttendance(x.payload.record,r)));
   rows.push(item);
   localStorage.setItem(keyPendingCheckout,JSON.stringify(rows.slice(-20)));
@@ -707,6 +707,7 @@ function mergeServerToday(r){
     outLocal:r.outLocal||null,
     overtime:Number(r.overtime)||0,
     checkoutWork:r.checkoutWork||r.outWork||existing.checkoutWork||existing.outWork||'',
+    checkoutWarehouse:r.checkoutWarehouse||existing.checkoutWarehouse||'',
     source:'server'
   });
 
@@ -878,23 +879,22 @@ async function performCheckOut(){
     if(endpoint()&&(!r||((r.out||r.outLocal)&&r.source!=='server'))){
       attendanceStatus('Memeriksa absen masuk di server. Mohon tunggu...');
       const sr=await serverToday();
-      if(sr){mergeServerToday(sr);r=localToday();}else r=null;
+      if(sr){mergeServerToday(sr);r=localToday()||sr;}else r=null;
     }
-    if(!r){attendanceStatus('Absen masuk hari ini belum ditemukan.','bad');return alert('Belum ada absen masuk hari ini.');}
+    if(!r){attendanceStatus('Belum ditemukan Absen Masuk hari ini di semua gudang. Periksa nama dan koneksi.','bad');return alert('Belum ada Absen Masuk hari ini di seluruh gudang. Pastikan nama karyawan sama dan data masuk sudah terkonfirmasi server.');}
     if(r.out||r.outLocal){attendanceStatus('Absen pulang sudah terkonfirmasi.','ok');return alert('Absen pulang sudah tersimpan.');}
 
     const pending=pendingCheckout();
     const outWork=String($('outWork').value||pending?.payload?.record?.outWork||'').trim();
     if(!outWork) return alert('Jobdesk Pulang wajib diisi sebelum Absen Pulang.');
 
-    attendanceStatus('Mengambil lokasi untuk absen pulang...');
+    attendanceStatus('Absen masuk: '+warehouseLabel(r.warehouse)+' · Pulang: '+warehouseLabel(warehouse())+'. Mengambil lokasi GPS pulang...');
     gps=null;
-    await getGps({
-      timeoutMs:45000,
-      retry:true,
-      retryTimeoutMs:30000,
-      allowRecent:true
-    });
+    try {
+      await getGps({timeoutMs:45000,retry:true,retryTimeoutMs:30000,allowRecent:true});
+    } catch(err) {
+      throw new Error('GPS pulang gagal: '+err.message+'. Aktifkan lokasi presisi dan izin lokasi untuk aplikasi/browser.');
+    }
 
     if(endpoint()){
       const item=queueCheckout(r,gps,outWork);
@@ -910,7 +910,7 @@ async function performCheckOut(){
       alert('Absen pulang terverifikasi. Lembur = '+Number(verified.overtime||0).toFixed(2)+' jam.');
     }else{
       const now=new Date();
-      r={...r,out:now.toISOString(),outLocal:now.toLocaleTimeString('id-ID',{hour12:false,timeZone:'Asia/Jakarta'}),outGps:{...gps},outWork,checkoutWork:outWork};
+      r={...r,out:now.toISOString(),outLocal:now.toLocaleTimeString('id-ID',{hour12:false,timeZone:'Asia/Jakarta'}),outGps:{...gps},outWork,checkoutWork:outWork,checkoutWarehouse:warehouse()};
       const items=records();
       const i=items.findIndex(x=>String(x.id)===String(r.id));
       if(i>=0) items[i]=r;
@@ -922,8 +922,8 @@ async function performCheckOut(){
     gps=null;
     render();
   }catch(err){
-    attendanceStatus(err.message,'bad');
     render();
+    attendanceStatus('Absen pulang gagal: '+err.message,'bad');
     alert('Absen pulang belum selesai: '+err.message);
   }finally{
     $('checkOut').disabled=false;
@@ -945,7 +945,7 @@ function checkOut(){return runAttendance(performCheckOut);}
 
 function renderHistory(){
   const w=warehouse();
-  const items=records().filter(r=>String(r.warehouse||'').toUpperCase()===w), box=$('history');
+  const items=records().filter(r=>String(r.warehouse||'').toUpperCase()===w||String(r.checkoutWarehouse||'').toUpperCase()===w), box=$('history');
   if(!items.length){
     box.innerHTML='<p class="muted">Belum ada data pada device ini.</p>';
     return;
@@ -965,6 +965,7 @@ function renderHistory(){
       ' | Pulang: '+escapeHtml(r.outLocal||'-')+
       ' | Telat: '+late+' m'+
       ' | Lembur: '+Number(r.overtime||0).toFixed(2)+' jam</div>'+
+      '<div style="margin-top:5px"><b>Gudang pulang:</b> '+escapeHtml(warehouseLabel(r.checkoutWarehouse)||'-')+'</div>'+
       '<div style="margin-top:5px"><b>Jobdesk pulang:</b> '+escapeHtml(r.checkoutWork||r.outWork||'-')+'</div>'+
       '</div>';
   }).join('');

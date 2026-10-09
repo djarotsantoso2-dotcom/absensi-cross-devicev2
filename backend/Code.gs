@@ -20,8 +20,8 @@ const DIVISION_STARTS = Object.freeze({
 
 const WAREHOUSES = Object.freeze({
   KEBANDUNGAN: Object.freeze({name:'Kebandungan', lat:-6.633483, lon:106.775966, radiusM:200}),
-  PARAKAN: Object.freeze({name:'Parakan', lat:-6.622239, lon:106.771941, radiusM:10}),
-  CM: Object.freeze({name:'CM', lat:-6.6265, lon:106.7791667, radiusM:10}),
+  PARAKAN: Object.freeze({name:'Parakan', lat:-6.622239, lon:106.771941, radiusM:200}),
+  CM: Object.freeze({name:'CM', lat:-6.6265, lon:106.7791667, radiusM:200}),
   NANAS: Object.freeze({name:'Nanas', lat:-6.618490474658237, lon:106.78478377021241, radiusM:200})
 });
 
@@ -29,7 +29,7 @@ const HEADERS = [
   'ID','Karyawan','Divisi','Tanggal','Jam Masuk','Jadwal Masuk','Telat Menit',
   'Lat Masuk','Lon Masuk','Akurasi Masuk','Foto',
   'Jam Pulang','Lat Pulang','Lon Pulang','Akurasi Pulang','Lembur Jam',
-  'Host','Status','Dibuat','Diubah','Gudang','Jobdesk Pulang'
+  'Host','Status','Dibuat','Diubah','Gudang','Jobdesk Pulang','Gudang Pulang'
 ];
 
 function doGet(e) {
@@ -42,7 +42,7 @@ function doGet(e) {
         ok: true,
         service: 'Absensi Kamera GPS',
         version: APP_VERSION,
-        capabilities: {writeStatus:true,checkoutWork:true},
+        capabilities: {writeStatus:true,checkoutWork:true,crossWarehouseCheckout:true},
         host: hostLabel_(),
         hosts: HOST_EMAILS,
         normalOut: getProp_('NORMAL_OUT', DEFAULT_NORMAL_OUT),
@@ -144,7 +144,7 @@ function saveCheckin_(sh, r) {
     id, employee, division, date, inLocal, scheduledStart, lateMinutes,
     val_(r.inGps,'lat'), val_(r.inGps,'lon'), val_(r.inGps,'accuracy'), photoUrl,
     '', '', '', '', 0,
-    hostLabel_(), 'MASUK', serverNow, serverNow, warehouse, ''
+    hostLabel_(), 'MASUK', serverNow, serverNow, warehouse, '', ''
   ]);
 
   return {ok:true,row:sh.getLastRow(),record:publicRecord_(sh, sh.getLastRow())};
@@ -160,9 +160,11 @@ function saveCheckout_(sh, r) {
   if (!row) throw new Error('Data absen masuk hari ini tidak ditemukan');
 
   const existing = publicRecord_(sh, row);
-  const warehouse = normalizeWarehouse_(r.warehouse);
-  if (!employee || !warehouse || cleanName_(existing.employee).toLowerCase() !== employee.toLowerCase() || existing.warehouse !== warehouse || existing.date !== date) {
-    throw new Error('Data absen masuk tidak cocok dengan karyawan, gudang, atau tanggal hari ini');
+  const originWarehouse = normalizeWarehouse_(r.warehouse);
+  const checkoutWarehouse = normalizeWarehouse_(r.checkoutWarehouse || r.warehouse);
+  if (!checkoutWarehouse) throw new Error('Gudang pulang tidak valid. Pilih Kebandungan, Parakan, CM, atau Nanas.');
+  if (!employee || !originWarehouse || cleanName_(existing.employee).toLowerCase() !== employee.toLowerCase() || existing.warehouse !== originWarehouse || existing.date !== date) {
+    throw new Error('Identitas atau data absen masuk tidak cocok. Pastikan nama, gudang asal dan tanggal benar.');
   }
   if (!r.outGps || !Number.isFinite(r.outGps.lat) || !Number.isFinite(r.outGps.lon) || Math.abs(r.outGps.lat) > 90 || Math.abs(r.outGps.lon) > 180) {
     throw new Error('Koordinat GPS pulang tidak valid');
@@ -184,7 +186,7 @@ function saveCheckout_(sh, r) {
     sh.getRange(row,19).getValue() || serverNow,
     serverNow
   ]]);
-  sh.getRange(row,22).setValue(checkoutWork);
+  sh.getRange(row,22,1,2).setValues([[checkoutWork,checkoutWarehouse]]);
 
   return {ok:true,row:row,record:publicRecord_(sh,row)};
 }
@@ -196,7 +198,7 @@ function getToday_(employee, warehouse, requestedDate) {
   if (!wh) throw new Error('Gudang belum dipilih');
   const date = format_(new Date(),'yyyy-MM-dd');
   const sh = getSheet_();
-  const row = findRowByEmployeeDateWarehouse_(sh, name, date, wh);
+  const row = findRowByEmployeeDateWarehouse_(sh, name, date, wh) || findRowByEmployeeDate_(sh, name, date);
   return {ok:true,record:row ? publicRecord_(sh,row) : null};
 }
 
@@ -251,7 +253,10 @@ function getSheet_() {
 
 function ensureHeader_(sh) {
   const last = sh.getLastRow();
-
+  // Always append; never shift existing U (Gudang) and V (Jobdesk Pulang).
+  if (sh.getMaxColumns() < HEADERS.length) {
+    sh.insertColumnsAfter(sh.getMaxColumns(), HEADERS.length - sh.getMaxColumns());
+  }
   if (last === 0) {
     sh.getRange(1,1,1,HEADERS.length).setValues([HEADERS]);
     return;
@@ -269,21 +274,25 @@ function ensureHeader_(sh) {
 
   if (old23Same || old22Same) {
     sh.deleteColumn(12);
-    sh.getRange(1,1,1,HEADERS.length).setValues([HEADERS]);
-    return;
+    // Preserve all existing row values while shifting legacy columns once.
   }
 
-  const current = sh.getRange(1,1,1,HEADERS.length).getDisplayValues()[0];
-  const same = HEADERS.every((h,i) => String(current[i] || '') === h);
-  if (same) return;
+  const existingHeaders = sh.getRange(1,1,1,HEADERS.length-1).getDisplayValues()[0];
+  const baseValid = HEADERS.slice(0,-1).every((h,i) => String(existingHeaders[i] || '') === h);
+  if (!baseValid) throw new Error('Struktur sheet Absensi tidak dikenali. Tidak ada data yang dihapus.');
 
-  if (last <= 1) {
-    sh.getRange(1,1,1,Math.max(sh.getLastColumn(),HEADERS.length)).clearContent();
-    sh.getRange(1,1,1,HEADERS.length).setValues([HEADERS]);
-    return;
+  const lastHeader = String(sh.getRange(1,23).getDisplayValue() || '').trim();
+  if (lastHeader === 'Gudang Pulang') return;
+  if (lastHeader !== '' && lastHeader !== 'Column 1') {
+    throw new Error('Kolom W sudah dipakai ('+lastHeader+'). Periksa sebelum mengubah header.');
   }
-
-  throw new Error('Struktur sheet tidak dikenali. Backup data lalu periksa header sheet Absensi.');
+  if (sh.getLastRow()>1) {
+    const existingData = sh.getRange(2,23,sh.getLastRow()-1,1).getDisplayValues();
+    if (existingData.some(row=>String(row[0]||'').trim())) {
+      throw new Error('Kolom W berisi data. Gudang Pulang tidak akan menimpa data lain.');
+    }
+  }
+  sh.getRange(1,23).setValue('Gudang Pulang');
 }
 
 function findRowById_(sh,id) {
@@ -332,7 +341,8 @@ function publicRecord_(sh,row) {
     outLocal:v[11] instanceof Date ? format_(v[11], 'HH:mm:ss') : String(v[11]||''),
     overtime:Number(v[15])||0,
     status:String(v[17]||''),
-    checkoutWork:String(v[21]||'')
+    checkoutWork:String(v[21]||''),
+    checkoutWarehouse:String(v[22]||'')
   };
 }
 
