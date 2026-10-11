@@ -42,7 +42,7 @@ function doGet(e) {
         ok: true,
         service: 'Absensi Kamera GPS',
         version: APP_VERSION,
-        capabilities: {writeStatus:true,checkoutWork:true,crossWarehouseCheckout:true},
+        capabilities: {writeStatus:true,checkoutWork:true,crossWarehouseCheckout:true,checkinRecovery:true},
         host: hostLabel_(),
         hosts: HOST_EMAILS,
         normalOut: getProp_('NORMAL_OUT', DEFAULT_NORMAL_OUT),
@@ -52,6 +52,8 @@ function doGet(e) {
       };
     } else if (action === 'today') {
       result = getToday_(p.employee, p.warehouse, p.date);
+    } else if (action === 'checkinStatus') {
+      result = getCheckinStatus_(p);
     } else if (action === 'writeStatus') {
       result = getWriteStatus_(p);
     } else if (action === 'weekSummary') {
@@ -85,6 +87,8 @@ function doPost(e) {
     SpreadsheetApp.flush();
   } catch (err) {
     result = {ok:false,error:String(err && err.message || err)};
+    // Never log photos, GPS, or employee names. Logs include request ID and cause only.
+    console.error('[ABSENSI_WRITE_REJECTED]',JSON.stringify({type:String(payload?.type||''),requestId:String(payload?.requestId||''),error:result.error}));
   } finally {
     if (acquired) {try { lock.releaseLock(); } catch (_) {}}
   }
@@ -119,6 +123,43 @@ function getWriteStatus_(p) {
   return {ok:true,pending:false,result:entry.result};
 }
 
+// CHECKIN_RECOVERY_SAFE_V2: Read-only idempotent check-in lookup, including a prior day.
+function getCheckinStatus_(p) {
+  const id = String(p.id || '').trim();
+  const employee = cleanName_(p.employee);
+  const warehouse = normalizeWarehouse_(p.warehouse);
+  const date = String(p.date || '');
+  if (!employee || !warehouse || !/^\d{4}-\d{2}-\d{2}$/.test(date) || id.length > 160) {
+    throw new Error('Identitas pengecekan Absen Masuk tidak valid');
+  }
+  const sh = getSheet_();
+  let row = id ? findRowById_(sh,id) : 0;
+  if (!row) row = findRowByEmployeeDate_(sh, employee, date);
+  if (!row) return {ok:true,record:null};
+  const saved = publicRecord_(sh,row);
+  if (cleanName_(saved.employee).toLowerCase() !== employee.toLowerCase() || saved.date !== date) {
+    return {ok:true,record:null};
+  }
+  return {ok:true,record:saved};
+}
+
+// Preserve the original device timestamp ONLY when resending a pending local record.
+// Server still stores its own receipt time in Dibuat/Diubah for auditing.
+// The original device clock is not cryptographic proof; a 72-hour limit applies.
+function checkinCapturedTime_(r, serverNow) {
+  if (r.recovery !== true) return serverNow;
+  const timestamp = String(r.in || '');
+  const captured = new Date(timestamp);
+  const lag = serverNow.getTime() - captured.getTime();
+  if (!Number.isFinite(captured.getTime()) || lag < -5*60*1000 || lag > 72*60*60*1000) {
+    throw new Error('Waktu absensi lokal tidak valid atau lebih dari 72 jam. Hubungi admin untuk rekonsiliasi manual; data lokal jangan dihapus.');
+  }
+  if (String(r.date || '') !== format_(captured,'yyyy-MM-dd')) {
+    throw new Error('Tanggal absensi lokal berbeda dari waktu foto/rekaman. Hubungi admin; data lokal tetap disimpan.');
+  }
+  return captured;
+}
+
 function saveCheckin_(sh, r) {
   const employee = cleanName_(r.employee);
   const division = normalizeDivision_(r.division);
@@ -127,27 +168,41 @@ function saveCheckin_(sh, r) {
   if (!division) throw new Error('Divisi wajib dipilih: Admin, Packing, atau Gudang');
   if (!warehouse) throw new Error('Gudang wajib dipilih: Kebandungan, Parakan, CM, atau Nanas');
 
-  validateCheckinGeofence_(warehouse, r.inGps);
-
   const serverNow = new Date();
-  const date = format_(serverNow, 'yyyy-MM-dd');
-  const inLocal = format_(serverNow, 'HH:mm:ss');
-  const existing = findRowByEmployeeDate_(sh, employee, date);
-  if (existing) return {ok:false,duplicate:true,error:'Karyawan sudah absen hari ini',record:publicRecord_(sh, existing)};
-
+  const captured = checkinCapturedTime_(r,serverNow);
+  const date = format_(captured,'yyyy-MM-dd');
+  const inLocal = format_(captured,'HH:mm:ss');
   const id = String(r.id || Utilities.getUuid());
+
+  // Idempotency BEFORE uploading a photo: retries must not create a second row.
+  const existingById = findRowById_(sh,id);
+  if (existingById) {
+    const saved = publicRecord_(sh,existingById);
+    if (cleanName_(saved.employee).toLowerCase() !== employee.toLowerCase() || saved.date !== date) {
+      throw new Error('ID absen lokal telah digunakan data berbeda. Hubungi admin; jangan hapus data lokal.');
+    }
+    return {ok:true,duplicate:true,record:saved};
+  }
+  const existing = findRowByEmployeeDate_(sh,employee,date);
+  if (existing) {
+    // Do not overwrite a record in another warehouse; expose conflict to the device.
+    return {ok:true,duplicate:true,conflict:true,record:publicRecord_(sh,existing)};
+  }
+
+  // Enforce original geofence also for delayed uploads, using GPS captured at check-in.
+  validateCheckinGeofence_(warehouse,r.inGps);
+  if (!r.inPhoto) throw new Error('Foto selfie Absen Masuk tidak tersedia dalam data lokal. Minta admin memeriksa data.');
   const scheduledStart = DIVISION_STARTS[division];
-  const lateMinutes = lateMinutes_(inLocal, scheduledStart);
-  const photoUrl = r.inPhoto ? savePhoto_(r.inPhoto, `${safe_(warehouse)}_${safe_(employee)}_${date}_${safe_(id)}.jpg`) : '';
+  const lateMinutes = lateMinutes_(inLocal,scheduledStart);
+  const photoUrl = savePhoto_(r.inPhoto,`${safe_(warehouse)}_${safe_(employee)}_${date}_${safe_(id)}.jpg`);
 
   sh.appendRow([
-    id, employee, division, date, inLocal, scheduledStart, lateMinutes,
-    val_(r.inGps,'lat'), val_(r.inGps,'lon'), val_(r.inGps,'accuracy'), photoUrl,
-    '', '', '', '', 0,
-    hostLabel_(), 'MASUK', serverNow, serverNow, warehouse, '', ''
+    id,employee,division,date,inLocal,scheduledStart,lateMinutes,
+    val_(r.inGps,'lat'),val_(r.inGps,'lon'),val_(r.inGps,'accuracy'),photoUrl,
+    '','','','',0,
+    hostLabel_(),'MASUK',serverNow,serverNow,warehouse,'',''
   ]);
-
-  return {ok:true,row:sh.getLastRow(),record:publicRecord_(sh, sh.getLastRow())};
+  return {ok:true,row:sh.getLastRow(),record:publicRecord_(sh,sh.getLastRow())};
 }
 
 function saveCheckout_(sh, r) {

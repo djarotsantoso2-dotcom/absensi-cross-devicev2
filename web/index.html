@@ -283,9 +283,15 @@
         <h2>Absensi Hari Ini</h2>
         <button class="btn success" id="checkIn">ABSEN MASUK</button>
         <button class="btn danger" id="checkOut">ABSEN PULANG</button>
+        <div class="notice hidden" id="localSyncBox" role="status">
+          <b>Absen lokal belum tersinkron</b>
+          <p id="localSyncCount">Data tersimpan pada perangkat.</p>
+          <button class="btn secondary" id="retryCheckIn">SINKRONKAN ULANG ABSEN LOKAL</button>
+          <small>Gunakan perangkat dan browser yang menyimpan absensi asli. Foto, GPS, dan jam masuk tidak diambil ulang. Jangan hapus data aplikasi.</small>
+        </div>
         <p id="attendanceState" class="muted" role="status" aria-live="polite"></p>
         <div class="notice">
-          Jam masuk aktual selalu memakai waktu server. Jadwal: Admin 08:00, Packing 09:00, Gudang 09:00.
+          Jam masuk normal memakai waktu server; saat pemulihan offline, waktu rekaman perangkat dipertahankan dan waktu penerimaan server diaudit. Jadwal: Admin 08:00, Packing 09:00, Gudang 09:00.
           Saat pulang, GPS diminta kembali. Lembur hanya dihitung setelah jam pulang normal dan tidak dihitung bila baru masuk setelah jam pulang normal.
         </div>
       </div>
@@ -368,6 +374,86 @@ function delay(ms){ return new Promise(resolve=>setTimeout(resolve,ms)); }
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function employeeKey(value){return String(value||'').replace(/\s+/g,' ').trim().slice(0,80).toLowerCase();}
 function localToday(){ const n=employee(), day=localDate(), w=warehouse(); const rows=records().filter(r=>employeeKey(r.employee)===employeeKey(n)&&r.date===day); return rows.find(r=>String(r.warehouse||'').toUpperCase()===w)||rows[0]||null; }
+
+// CHECKIN_RECOVERY_SAFE_V2: Local attendance remains untouched until the server confirms it.
+function pendingLocalCheckins() {
+  return records().filter(r=>r && r.id && r.employee && r.date &&
+    r.source !== 'server' && !(r.syncState === 'verified') && r.in && !(r.out||r.outLocal));
+}
+function sameCheckin(a,b) {
+  return !!(a&&b) && String(a.id)===String(b.id) &&
+    employeeKey(a.employee)===employeeKey(b.employee) && a.date===b.date &&
+    String(a.warehouse||'').toUpperCase()===String(b.warehouse||'').toUpperCase();
+}
+function showLocalSync() {
+  const pending=pendingLocalCheckins();
+  const section=$('localSyncBox');
+  if(!section) return;
+  section.classList.toggle('hidden',!pending.length);
+  if(pending.length){
+    $('localSyncCount').textContent=pending.length+' absensi lokal menunggu verifikasi pusat. Data tidak akan dihapus.';
+    $('retryCheckIn').disabled=attendanceBusy;
+  }
+}
+async function getCheckinStatus(r) {
+  const response=await jsonp({action:'checkinStatus',id:r.id,employee:r.employee,warehouse:r.warehouse,date:r.date});
+  if(!response?.ok) throw serverResponseError(response?.error||'Pemeriksaan absensi lokal gagal. Periksa versi backend.');
+  return response.record||null;
+}
+function confirmCheckinRecord(local,remote) {
+  if(!sameCheckin(local,remote)) {
+    throw new Error('Absen sudah ada di pusat dengan identitas, gudang, tanggal, atau ID berbeda. Jangan mengirim ulang; hubungi admin agar tidak terjadi data ganda.');
+  }
+  mergeServerToday(remote);
+  render();
+  return remote;
+}
+async function verifyCheckinWrite(item) {
+  const r=item.payload.record;
+  for(let i=0;i<4;i++){
+    await delay(i===0?700:1300);
+    try{
+      const data=await jsonp({action:'writeStatus',requestId:item.payload.requestId,employee:r.employee,warehouse:r.warehouse});
+      if(!data?.ok) throw serverResponseError(data?.error||'Status penulisan server gagal.');
+      if(data.pending) continue;
+      if(!data.result?.ok) throw serverResponseError(data.result?.error||'Server menolak Absen Masuk.');
+      if(data.result.record) return confirmCheckinRecord(r,data.result.record);
+    }catch(err){if(!err.retryable) throw err;}
+  }
+  // Cache status may expire: ask the database itself, never assume success on HTTP 200.
+  const saved=await getCheckinStatus(r);
+  return saved?confirmCheckinRecord(r,saved):null;
+}
+async function syncOneLocalCheckin(r) {
+  if(!r?.id || !r.in || !r.inGps || !r.inPhoto) {
+    throw new Error('Data lokal tidak lengkap (foto/GPS/waktu/ID). Jangan hapus; hubungi admin.');
+  }
+  const saved=await getCheckinStatus(r);
+  if(saved) return confirmCheckinRecord(r,saved);
+  const item={payload:{type:'checkin',requestId:'in_'+Date.now()+'_'+Math.random().toString(36).slice(2),record:{...r,recovery:true}}};
+  try {await sendWrite(item.payload);} catch(err) {if(!err.retryable) throw err;}
+  const verified=await verifyCheckinWrite(item);
+  if(!verified) throw new Error('Terkirim tetapi belum terkonfirmasi di pusat. Data tetap tersimpan lokal. Coba sinkron ulang.');
+  return verified;
+}
+async function retryLocalCheckins() {
+  const pending=pendingLocalCheckins();
+  if(!pending.length){alert('Tidak ada Absen Masuk lokal yang menunggu sinkronisasi.');return;}
+  if(!endpoint()) throw new Error('URL Google Apps Script belum tersedia.');
+  let success=0; const errors=[];
+  // Bounded batch. A single failed record does not prevent others from syncing.
+  for(const r of pending.slice(0,20)){
+    attendanceStatus('Sinkronisasi '+(success+errors.length+1)+'/'+Math.min(pending.length,20)+': '+r.employee+' ('+r.date+')...');
+    try{await syncOneLocalCheckin(r);success++;}
+    catch(err){errors.push(r.employee+' '+r.date+': '+err.message);}
+  }
+  render();
+  const message='Terverifikasi: '+success+'. Belum berhasil: '+errors.length+'.'+
+    (errors.length?'\n'+errors.slice(0,3).join('\n'):'')+
+    (pending.length>20?'\nMasih ada data lain; klik Sinkron Ulang lagi.':'');
+  attendanceStatus(message,errors.length?'bad':'ok');
+  alert(message);
+}
 
 function sameAttendance(a,b){
   return employeeKey(a.employee)===employeeKey(b.employee)&&a.date===b.date&&String(a.warehouse||'').toUpperCase()===String(b.warehouse||'').toUpperCase();
@@ -476,6 +562,7 @@ function updateToday(){
   if(!employee()){p.textContent='Isi nama';p.className='pill';}
   else if(r&&(r.out||r.outLocal)){p.textContent='Sudah pulang';p.className='pill ok';}
   else if(pendingCheckout()){p.textContent='Pulang belum terkonfirmasi';p.className='pill warn';}
+  else if(r&&r.source!=='server'){p.textContent='Masuk tersimpan lokal';p.className='pill warn';}
   else if(r){p.textContent='Sudah masuk';p.className='pill ok';}
   else{p.textContent='Belum absen';p.className='pill warn';}
   updateScheduleUi();
@@ -811,6 +898,14 @@ async function performCheckIn(){
   if(!name) return alert('Isi dan simpan nama karyawan terlebih dahulu.');
   if(!div) return alert('Pilih divisi Admin, Packing, atau Gudang terlebih dahulu.');
 
+  const pending=pendingLocalCheckins().find(r=>employeeKey(r.employee)===employeeKey(name)&&r.date===localDate());
+  if(pending){
+    attendanceStatus('Memulihkan Absen Masuk yang sudah direkam di perangkat...');
+    try{await syncOneLocalCheckin(pending);alert('Absen Masuk lokal sudah terverifikasi di server.');}
+    catch(err){attendanceStatus('Data tetap tersimpan lokal: '+err.message,'bad');alert('Sinkron ulang gagal: '+err.message);}
+    return;
+  }
+
   if(endpoint()){
     const existing=await serverToday();
     if(existing){mergeServerToday(existing);return alert((existing.out||existing.outLocal)?'Hari ini sudah absen dan sudah pulang.':'Hari ini sudah absen masuk.');}
@@ -837,7 +932,8 @@ async function performCheckIn(){
       inPhoto:photoData,
       out:null,
       outGps:null,
-      overtime:0
+      overtime:0,
+      source:'local'
     };
 
     const items=records();
@@ -846,10 +942,10 @@ async function performCheckIn(){
     render();
 
     if(endpoint()){
-      await sendWrite({type:'checkin',record});
-      const verified=await verifyToday();
-      if(!verified) throw new Error('Data tersimpan lokal, tetapi server belum mengonfirmasi. Tekan Absen Masuk lagi untuk memeriksa dan mencoba ulang.');
-      mergeServerToday(verified);
+      const request={payload:{type:'checkin',requestId:'in_'+Date.now()+'_'+Math.random().toString(36).slice(2),record}};
+      try{await sendWrite(request.payload);}catch(err){if(!err.retryable) throw err;}
+      const verified=await verifyCheckinWrite(request);
+      if(!verified) throw new Error('Data tersimpan lokal, tetapi server belum mengonfirmasi. Tekan tombol Sinkronkan Ulang.');
       $('syncState').textContent=verified
         ? 'Absen masuk terverifikasi di server.'
         : 'Absen dikirim; verifikasi server belum terbaca.';
@@ -861,7 +957,9 @@ async function performCheckIn(){
     render();
     alert('Absen masuk berhasil disimpan'+(endpoint()?' dan dikirim ke server.':'.'));
   }catch(err){
-    alert('Absen masuk gagal: '+err.message);
+    render();
+    attendanceStatus('Absen Masuk belum tersinkron: '+err.message,'bad');
+    alert('Absen Masuk belum tersinkron: '+err.message+'\nJika foto/GPS sudah direkam, data tetap lokal. Tekan SINKRONKAN ULANG ABSEN LOKAL.');
   }finally{
     $('checkIn').disabled=false;
   }
@@ -974,6 +1072,7 @@ function renderHistory(){
 function render(){
   renderHistory();
   $('version').textContent=CFG.APP_VERSION||'1.9.9';
+  showLocalSync();
   const pending=pendingCheckout();
   if(pending&&$('outWork')&&!$('outWork').value) $('outWork').value=String(pending.payload.record.outWork||'');
   if(!attendanceBusy&&pending) attendanceStatus('Ada permintaan pulang yang belum terkonfirmasi. Tekan Absen Pulang untuk mencoba kembali.');
@@ -1031,6 +1130,7 @@ $('retryPhoto').onclick=()=>openCamera().catch(e=>alert('Kamera gagal: '+e.messa
 $('getGps').onclick=()=>getGps().catch(()=>{});
 $('checkIn').onclick=checkIn;
 $('checkOut').onclick=checkOut;
+$('retryCheckIn').onclick=()=>runAttendance(retryLocalCheckins);
 
 updateEmployee();
 if(warehouse()){
