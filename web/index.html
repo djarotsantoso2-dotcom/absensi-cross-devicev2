@@ -1051,7 +1051,7 @@ async function performCheckIn(){
     render();
 
     if(endpoint()){
-      const request={payload:{type:'checkin',requestId:'in_'+Date.now()+'_'+Math.random().toString(36).slice(2),record}};
+      const request={payload:{type:'checkin',requestId:'in_'+Date.now()+'_'+Math.random().toString(36).slice(2),record:{...record,inPhoto:photoData}}};
       try{await sendWrite(request.payload);}catch(err){if(!err.retryable) throw err;}
       const verified=await verifyCheckinWrite(request);
       if(!verified) throw new Error('Data tersimpan lokal, tetapi server belum mengonfirmasi. Tekan tombol Sinkronkan Ulang.');
