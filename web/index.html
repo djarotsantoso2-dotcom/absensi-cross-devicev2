@@ -355,8 +355,96 @@ if(!localStorage.getItem(migrationKey)){
   localStorage.setItem(migrationKey,'1');
 }
 
-function records(){ try{const rows=JSON.parse(localStorage.getItem(keyRecords)||'[]');return Array.isArray(rows)?rows:[];}catch(_){return[]} }
-function saveRecords(items){ localStorage.setItem(keyRecords, JSON.stringify(items.slice(0,120))); }
+// PHOTO_STORAGE_SAFE_V1: Foto besar disimpan di IndexedDB, bukan localStorage.
+// Foto inline lama tidak dihapus sampai penulisan ke IndexedDB terkonfirmasi.
+let recoveryRecords=[];
+let photoStorageError='';
+let photoDbPromise=null;
+function openPhotoDb(){
+  if(!photoDbPromise){
+    photoDbPromise=new Promise((resolve,reject)=>{
+      if(!window.indexedDB) return reject(new Error('IndexedDB tidak tersedia pada perangkat ini.'));
+      const req=indexedDB.open('absensi-photos-recovery-v1',1);
+      req.onupgradeneeded=()=>{
+        const db=req.result;
+        if(!db.objectStoreNames.contains('photos')) db.createObjectStore('photos');
+        if(!db.objectStoreNames.contains('pending')) db.createObjectStore('pending');
+      };
+      req.onsuccess=()=>resolve(req.result);
+      req.onerror=()=>reject(req.error||new Error('Penyimpanan IndexedDB gagal dibuka.'));
+      req.onblocked=()=>reject(new Error('Penyimpanan foto sedang dipakai halaman lain. Tutup tab absensi lain.'));
+    }).catch(err=>{photoDbPromise=null;throw err;});
+  }
+  return photoDbPromise;
+}
+async function photoDbAction(store,mode,action){
+  const db=await openPhotoDb();
+  return new Promise((resolve,reject)=>{
+    let value;
+    const tx=db.transaction(store,mode);
+    const req=action(tx.objectStore(store));
+    req.onsuccess=()=>{value=req.result;};
+    tx.oncomplete=()=>resolve(value);
+    tx.onerror=()=>reject(tx.error||new Error('Penyimpanan lokal gagal.'));
+    tx.onabort=()=>reject(tx.error||new Error('Penyimpanan lokal dibatalkan.'));
+  });
+}
+function storePhoto(id,data){return photoDbAction('photos','readwrite',s=>s.put(data,String(id)));}
+function loadPhoto(id){return photoDbAction('photos','readonly',s=>s.get(String(id)));}
+function loadRecoveryRecords(){return photoDbAction('pending','readonly',s=>s.getAll());}
+async function protectPendingRecord(record){
+  await photoDbAction('pending','readwrite',s=>s.put(record,String(record.id)));
+  const idx=recoveryRecords.findIndex(r=>String(r.id)===String(record.id));
+  if(idx>=0) recoveryRecords[idx]=record;
+  else recoveryRecords.unshift(record);
+}
+async function clearProtectedPending(id){
+  await photoDbAction('pending','readwrite',s=>s.delete(String(id)));
+  recoveryRecords=recoveryRecords.filter(r=>String(r.id)!==String(id));
+}
+function records(){
+  let rows=[];
+  try{const parsed=JSON.parse(localStorage.getItem(keyRecords)||'[]');if(Array.isArray(parsed)) rows=parsed;}
+  catch(err){console.warn('Riwayat lokal tidak terbaca:',err);}
+  const known=new Set(rows.map(r=>String(r.id)));
+  return [...recoveryRecords.filter(r=>!known.has(String(r.id))),...rows];
+}
+function saveRecords(items){
+  // Jangan hapus riwayat lama dan jangan memangkas absensi belum tersinkron.
+  try{localStorage.setItem(keyRecords,JSON.stringify(items));}
+  catch(err){throw new Error('Penyimpanan riwayat browser penuh. Data absensi yang diamankan di IndexedDB tidak dihapus. Jangan bersihkan data aplikasi.');}
+}
+async function preparePhotoStorage(){
+  await openPhotoDb();
+  recoveryRecords=(await loadRecoveryRecords())||[];
+  const old=records();
+  let changed=false;
+  const next=[];
+  for(const r of old){
+    if(r && r.id && typeof r.inPhoto==='string' && r.inPhoto.startsWith('data:image/')){
+      // Simpan dan tunggu transaksi IndexedDB sukses sebelum menghapus foto inline.
+      await storePhoto(r.id,r.inPhoto);
+      const minimal={...r,photoStored:true};
+      delete minimal.inPhoto;
+      if(minimal.source!=='server' && minimal.syncState!=='verified') await protectPendingRecord(minimal);
+      next.push(minimal);
+      changed=true;
+    }else next.push(r);
+  }
+  if(changed) saveRecords(next);
+}
+const photoStorageReady=preparePhotoStorage().then(()=>{
+  render();
+  return true;
+}).catch(err=>{
+  photoStorageError=String(err?.message||err);
+  console.error('Data absensi lama tidak dihapus. Migrasi foto gagal:',err);
+  attendanceStatus('Penyimpanan foto perlu diperbaiki: '+photoStorageError,'bad');
+  return false;
+});
+async function requirePhotoStorage(){
+  if(!(await photoStorageReady)) throw new Error('Penyimpanan foto tidak tersedia: '+photoStorageError+'. Data lama tidak dihapus. Jangan bersihkan data aplikasi.');
+}
 
 function settings(){
   const base={dailyPay:0,otPay:0,endpoint:''};
@@ -404,7 +492,15 @@ function confirmCheckinRecord(local,remote) {
   if(!sameCheckin(local,remote)) {
     throw new Error('Absen sudah ada di pusat dengan identitas, gudang, tanggal, atau ID berbeda. Jangan mengirim ulang; hubungi admin agar tidak terjadi data ganda.');
   }
-  mergeServerToday(remote);
+  try{
+    mergeServerToday(remote);
+    // Hanya hapus cadangan pending setelah metadata server benar-benar tersimpan.
+    clearProtectedPending(local.id).then(render).catch(err=>console.warn('Backup pending masih tersimpan:',err));
+  }catch(err){
+    // Server sudah mengonfirmasi; status server bukan gagal hanya karena riwayat lokal penuh.
+    attendanceStatus('Server mengonfirmasi absensi, tetapi riwayat lokal belum berhasil diperbarui: '+err.message,'bad');
+    console.warn('Backup absensi tetap aman dalam IndexedDB:',err);
+  }
   render();
   return remote;
 }
@@ -425,18 +521,23 @@ async function verifyCheckinWrite(item) {
   return saved?confirmCheckinRecord(r,saved):null;
 }
 async function syncOneLocalCheckin(r) {
-  if(!r?.id || !r.in || !r.inGps || !r.inPhoto) {
-    throw new Error('Data lokal tidak lengkap (foto/GPS/waktu/ID). Jangan hapus; hubungi admin.');
+  await requirePhotoStorage();
+  if(!r?.id || !r.in || !r.inGps) {
+    throw new Error('Data lokal tidak lengkap (GPS/waktu/ID). Jangan hapus; hubungi admin.');
   }
+  // Jika server sudah punya record, jangan kirim foto lagi.
   const saved=await getCheckinStatus(r);
   if(saved) return confirmCheckinRecord(r,saved);
-  const item={payload:{type:'checkin',requestId:'in_'+Date.now()+'_'+Math.random().toString(36).slice(2),record:{...r,recovery:true}}};
+  const selfie=r.inPhoto || await loadPhoto(r.id);
+  if(!selfie) throw new Error('Foto selfie lokal tidak ditemukan. Jangan hapus data aplikasi; hubungi admin.');
+  const item={payload:{type:'checkin',requestId:'in_'+Date.now()+'_'+Math.random().toString(36).slice(2),record:{...r,inPhoto:selfie,recovery:true}}};
   try {await sendWrite(item.payload);} catch(err) {if(!err.retryable) throw err;}
   const verified=await verifyCheckinWrite(item);
-  if(!verified) throw new Error('Terkirim tetapi belum terkonfirmasi di pusat. Data tetap tersimpan lokal. Coba sinkron ulang.');
+  if(!verified) throw new Error('Terkirim tetapi belum terkonfirmasi di pusat. Cadangan lokal tetap disimpan. Coba sinkron ulang.');
   return verified;
 }
 async function retryLocalCheckins() {
+  await requirePhotoStorage();
   const pending=pendingLocalCheckins();
   if(!pending.length){alert('Tidak ada Absen Masuk lokal yang menunggu sinkronisasi.');return;}
   if(!endpoint()) throw new Error('URL Google Apps Script belum tersedia.');
@@ -812,6 +913,7 @@ function mergeServerToday(r){
 
 async function hydrateTodayFromServer(silent=true){
   if(attendanceBusy||syncBusy||!endpoint()||!employee()||!warehouse()) return null;
+  if(!(await photoStorageReady)) return null;
   syncBusy=true;
   const revision=attendanceRevision;
   try{
@@ -893,10 +995,12 @@ async function performCheckIn(){
   const name=employee();
   const div=division();
   const wh=warehouse();
+  let savedLocally=false;
 
   if(!wh) return alert('Pilih gudang terlebih dahulu.');
   if(!name) return alert('Isi dan simpan nama karyawan terlebih dahulu.');
   if(!div) return alert('Pilih divisi Admin, Packing, atau Gudang terlebih dahulu.');
+  try{await requirePhotoStorage();}catch(err){return alert(err.message);}
 
   const pending=pendingLocalCheckins().find(r=>employeeKey(r.employee)===employeeKey(name)&&r.date===localDate());
   if(pending){
@@ -929,16 +1033,21 @@ async function performCheckIn(){
       scheduledStart:scheduleFor(div),
       lateMinutes:0,
       inGps:{...gps},
-      inPhoto:photoData,
+      photoStored:true,
       out:null,
       outGps:null,
       overtime:0,
       source:'local'
     };
 
+    // Simpan foto dan metadata pemulihan dengan transaksi IndexedDB dahulu.
+    await storePhoto(record.id,photoData);
+    await protectPendingRecord(record);
+    savedLocally=true;
     const items=records();
-    items.unshift(record);
-    saveRecords(items);
+    // records() sudah menggabungkan data yang diamankan dalam IndexedDB.
+    try{saveRecords(items);}
+    catch(err){console.warn('Riwayat browser penuh; cadangan aman di IndexedDB:',err);}
     render();
 
     if(endpoint()){
@@ -958,8 +1067,11 @@ async function performCheckIn(){
     alert('Absen masuk berhasil disimpan'+(endpoint()?' dan dikirim ke server.':'.'));
   }catch(err){
     render();
-    attendanceStatus('Absen Masuk belum tersinkron: '+err.message,'bad');
-    alert('Absen Masuk belum tersinkron: '+err.message+'\nJika foto/GPS sudah direkam, data tetap lokal. Tekan SINKRONKAN ULANG ABSEN LOKAL.');
+    const info=savedLocally
+      ? 'Cadangan absen dan foto tersimpan di IndexedDB, tetapi belum terverifikasi server. Tekan SINKRONKAN ULANG ABSEN LOKAL.'
+      : 'PENYIMPANAN LOKAL GAGAL. Absensi ini belum dapat dinyatakan tersimpan. Jangan hapus data aplikasi; hubungi admin sebelum mencoba lagi.';
+    attendanceStatus('Absen Masuk belum selesai: '+err.message,'bad');
+    alert('Absen Masuk belum selesai: '+err.message+'\n'+info);
   }finally{
     $('checkIn').disabled=false;
   }
@@ -971,6 +1083,7 @@ async function performCheckOut(){
   if(!warehouse()) return alert('Pilih gudang terlebih dahulu.');
 
   try{
+    await requirePhotoStorage();
     $('checkOut').disabled=true;
     let r=localToday()||pendingCheckout()?.payload.record;
     // The backend validates the row. A known check-in does not need a blocking GET first.
@@ -1055,7 +1168,7 @@ function renderHistory(){
     return '<div class="record">'+
       '<div class="row"><div><b>'+escapeHtml(r.employee)+'</b>'+
       '<span class="muted">'+escapeHtml(r.date)+' · '+escapeHtml(warehouseLabel(r.warehouse))+' · '+escapeHtml(div)+'</span></div>'+
-      (r.inPhoto?'<img class="photo-thumb" src="'+r.inPhoto+'">':'')+
+      (r.photoStored?'<img class="photo-thumb" alt="Foto absensi" data-photo-id="'+escapeHtml(String(r.id))+'">':(r.inPhoto?'<img class="photo-thumb" alt="Foto absensi" src="'+r.inPhoto+'">':''))+
       '</div>'+
       '<div class="muted" style="margin-top:7px">'+
       'Jadwal: '+escapeHtml(r.scheduledStart||scheduleFor(r.division)||'-')+
@@ -1067,11 +1180,17 @@ function renderHistory(){
       '<div style="margin-top:5px"><b>Jobdesk pulang:</b> '+escapeHtml(r.checkoutWork||r.outWork||'-')+'</div>'+
       '</div>';
   }).join('');
+  // Thumbnail dibaca dari IndexedDB; tidak lagi mengambil base64 dari localStorage.
+  box.querySelectorAll('img[data-photo-id]').forEach(img=>{
+    const id=img.dataset.photoId;
+    loadPhoto(id).then(data=>{if(data && img.isConnected && img.dataset.photoId===id) img.src=data;})
+      .catch(err=>console.warn('Foto lokal tidak bisa ditampilkan:',err));
+  });
 }
 
 function render(){
   renderHistory();
-  $('version').textContent=CFG.APP_VERSION||'1.9.9';
+  $('version').textContent=CFG.APP_VERSION||'1.9.10';
   showLocalSync();
   const pending=pendingCheckout();
   if(pending&&$('outWork')&&!$('outWork').value) $('outWork').value=String(pending.payload.record.outWork||'');

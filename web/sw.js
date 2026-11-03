@@ -1,5 +1,5 @@
-const CACHE = 'absensi-gps-v1.9.9-checkin-recovery-20261011';
-const ASSETS = ['./', './index.html', './config.js', './manifest.webmanifest', './cs-store-flow-logo.png', './icon-192.png', './icon-512.png', './icon-192.png?v=1.9.9', './icon-512.png?v=1.9.9'];
+const CACHE = 'absensi-gps-v1.9.10-photo-indexeddb-20261103';
+const ASSETS = ['./', './index.html', './config.js', './manifest.webmanifest', './cs-store-flow-logo.png', './icon-192.png', './icon-512.png', './icon-192.png?v=1.9.10', './icon-512.png?v=1.9.10'];
 const assetUrls = new Set(ASSETS.map(path => new URL(path, self.registration.scope).href));
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));

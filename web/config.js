@@ -5,7 +5,7 @@ window.ABSENSI_CONFIG = Object.freeze({
     'djarotsantoso2@gmail.com',
     'suryowidiantoro682@gmail.com'
   ]),
-  APP_VERSION: '1.9.9',
+  APP_VERSION: '1.9.10',
   WAREHOUSES: Object.freeze({
     KEBANDUNGAN: Object.freeze({NAME:'Kebandungan', LAT:-6.633483, LON:106.775966, RADIUS_M:200}),
     PARAKAN: Object.freeze({NAME:'Parakan', LAT:-6.622239, LON:106.771941, RADIUS_M:200}),
